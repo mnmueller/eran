@@ -225,7 +225,7 @@ def encode_kactivation_cons(nn, man, element, offset, layerno, length, lbi, ubi,
 
                 linexpr0[i] = generate_linexpr0(offset, varsid, coeffs)
                 i = i + 1
-        upper_bound = get_upper_bound_for_linexpr0(man,element,linexpr0, total_size, layerno)
+        upper_bound = get_upper_bound_for_linexpr0(man, element, linexpr0, total_size, layerno)
         i=0
         input_hrep_array = []
         for varsid in kact_args:

@@ -1342,8 +1342,9 @@ else:
             #print("specLB ", specLB)
             is_correctly_classified = network.test(specLB, specUB, int(test[0]), True)
         else:
-            label,nn,nlb,nub,_,_ = eran.analyze_box(specLB, specUB, init_domain(domain), config.timeout_lp, config.timeout_milp, config.use_default_heuristic)
-            print("concrete ", nlb[-1])
+            label, nn, nlb, nub, _, _ = eran.analyze_box(specLB, specUB, init_domain(domain), config.timeout_lp, config.timeout_milp, config.use_default_heuristic)
+            if config.debug:
+                print("concrete ", nlb[-1])
             if label == int(test[0]):
                 is_correctly_classified = True
         #for number in range(len(nub)):
@@ -1456,7 +1457,7 @@ else:
                                                                                       timeout_final_milp=config.timeout_final_milp,
                                                                                       use_milp=False,
                                                                                       complete=False,
-                                                                                      terminate_on_failure = True,
+                                                                                      terminate_on_failure=(not config.complete or domain == "refinepoly"),
                                                                                       partial_milp=0,
                                                                                       max_milp_neurons=0,
                                                                                       approx_k=0)
@@ -1472,7 +1473,7 @@ else:
                                                                                       timeout_final_milp=config.timeout_final_milp,
                                                                                       use_milp=config.use_milp,
                                                                                       complete=config.complete,
-                                                                                      terminate_on_failure=not config.complete and domain == "refinepoly",
+                                                                                      terminate_on_failure=not config.complete,
                                                                                       partial_milp=config.partial_milp,
                                                                                       max_milp_neurons=config.max_milp_neurons,
                                                                                       approx_k=config.approx_k)
@@ -1501,7 +1502,6 @@ else:
                             else:
                                 print("img", i, "Failed with MILP")
                     else:
-                    
                         if x != None:
                             cex_label,_,_,_,_,_ = eran.analyze_box(x,x,'deepzono',config.timeout_lp, config.timeout_milp, config.use_default_heuristic, approx_k=config.approx_k)
                             print("cex label ", cex_label, "label ", label)

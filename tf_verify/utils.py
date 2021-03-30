@@ -165,17 +165,18 @@ def parse_vnn_lib_prop(file_path):
 
 
 def translate_output_constraints(C_out):
+    # Output constraints of the form C [net_outputs, 1] >= 0
     and_list = []
     for i in range(C_out.shape[0]):
-        numeric = C_out[i,-1]
+        numeric = C_out[i, -1]
         if numeric != 0:
             l_label = (C_out[i, 0:-1] == -1).nonzero()
             g_label = (C_out[i, 0:-1] == 1).nonzero()
-            assert len(l_label) == 1 + len(g_label) == 1
+            assert len(l_label) + len(g_label) == 1
             if len(l_label)>0:
-                raise NotImplementedError
+                and_list.append([(-1, l_label, numeric)])
             else:
-                and_list.append([(l_label, -1, numeric)])
+                and_list.append([(g_label, -1, numeric)])
         else:
             l_label = (C_out[i,0:-1]==-1).nonzero()[0]
             g_label = (C_out[i,0:-1]==1).nonzero()[0]

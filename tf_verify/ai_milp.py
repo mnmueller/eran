@@ -873,11 +873,14 @@ def verify_network_with_milp(nn, LB_N0, UB_N0, nlb, nub, constraints, spatial_co
             milp_timeout = config.timeout_final_milp if config.timeout_complete is None else (config.timeout_complete + start_milp - time.time())
             model.setParam(GRB.Param.TimeLimit, milp_timeout)
             obj = LinExpr()
-            if j== -1:
-                obj += float(k) - 1 * var_list[counter + i]
+            if j == -1: # var[i] > k
+                obj += 1 * var_list[counter + i] - float(k)
+                model.setObjective(obj, GRB.MINIMIZE)
+            elif i == -1: # var[j] < k
+                obj += float(k) - 1 * var_list[counter + j]
                 model.setObjective(obj, GRB.MINIMIZE)
             else:
-                if i!=j:
+                if i!=j: # var[i] > var[j]
                     obj += 1*var_list[counter + i]
                     obj += -1*var_list[counter + j]
                     model.setObjective(obj, GRB.MINIMIZE)

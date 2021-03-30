@@ -84,7 +84,11 @@ def get_constraints_from_file(file):
         if constraint == '>':
             label2 = label_index(elements[i])
             and_list.append([(label, label2, 0) for label in labels])
+
         if constraint == '<=' and isfloat(elements[i]):
+            and_list.append([(-1, label, float(elements[i])) for label in labels])
+
+        if constraint == '>=' and isfloat(elements[i]):
             and_list.append([(label, -1, float(elements[i])) for label in labels])
 
     return and_list

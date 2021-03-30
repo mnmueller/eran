@@ -1,13 +1,15 @@
 from optimizer import *
 from krelu import *
+from constraint_utils import get_constraints_for_dominant_label
 import time
 
-def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label, labels_to_be_verified, K=3, s=-2,
+def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label, labels_to_be_verified=None, K=3, s=-2,
                            timeout_lp=10, timeout_milp=10, timeout_final_lp=100, timeout_final_milp=100, use_milp=False,
-                           partial_milp=False, max_milp_neurons=30, complete=False, approx=True):
+                           partial_milp=False, max_milp_neurons=30, complete=False, approx=True, constraints=None):
     relu_groups = []
     nlb = []
     nub = []
+    if constraints is None: constraints = []
     #print("INPUT SIZE ", network._lib.getOutputSize(network._nn, 0))
     layerno = 2
     new_relu_layers = []
@@ -173,77 +175,86 @@ def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label,
     #print("TIMEOUT ", config.timeout_lp)
     flag = True
     x = None
-    for label in labels_to_be_verified:
-        obj = LinExpr()
-        #obj += 1*var_list[785]
-        obj += 1*var_list[counter + true_label]
-        obj += -1*var_list[counter + label]
-        model.setObjective(obj,GRB.MINIMIZE)
-        # model.optimize()
-        if complete:
-            milp_timeout = config.timeout_final_milp if config.timeout_complete is None else (config.timeout_complete + start_milp - time.time())
-            model.setParam(GRB.Param.TimeLimit, milp_timeout)
-            model.optimize(milp_callback)
-        else:
-            model.optimize(lp_callback)
-        # model.computeIIS()
-        #model.write("model_refinegpupo.ilp")
-        try:
-            print(
-                f"Model status: {model.Status}, Obj val/bound against label {label}: {model.objval:.4f}/{model.objbound:.4f}, Final solve time: {model.Runtime:.3f}")
-        except:
-            print(
-                f"Model status: {model.Status}, Objval retrival failed, Final solve time: {model.Runtime:.3f}")
 
-        if model.Status == 6 or (model.Status in [2,11] and model.objval > 0):
-            # Cutoff active, or optimal with positive objective => sound against adv_label
-            pass
-        elif partial_milp != 0 and not complete:
-            if model.Status == 2:
-                x_adv = np.array(model.x[0:len(nn.specLB)])
-                is_not_shown_unsafe = network.test(x_adv, x_adv, int(true_label))
-            else:
-                is_not_shown_unsafe = True
-            if not is_not_shown_unsafe:
-                flag = False
-                print(f"Counterexample found, partial MILP skipped.")
-            else:
-                obj = LinExpr()
-                obj += 1 * var_list_partial_milp[counter_partial_milp + true_label]
-                obj += -1 * var_list_partial_milp[counter_partial_milp + label]
-                model_partial_milp.setObjective(obj, GRB.MINIMIZE)
-                model_partial_milp.optimize(milp_callback)
-                if model_partial_milp.Status == 3:
-                    model_partial_milp.setParam(GRB.Param.FeasibilityTol, 1e-4)
-                    print(f"Infeasible model encountered. Increased tolerance")
-                    model_partial_milp.reset()
-                    model_partial_milp.optimize(milp_callback)
-                try:
-                    print(
-                        f"Partial MILP model status: {model_partial_milp.Status}, Obj val/bound against label {label}: {model_partial_milp.ObjVal:.4f}/{model_partial_milp.ObjBound:.4f}, Final solve time: {model_partial_milp.Runtime:.3f}")
-                except:
-                    print(
-                        f"Partial MILP model status: {model_partial_milp.Status}, Obj bound retrival failed, Final solve time: {model_partial_milp.Runtime:.3f}")
+    if labels_to_be_verified is not None:
+        constraints += get_constraints_for_dominant_label(true_label, labels_to_be_verified)
 
-                if model_partial_milp.Status in [2, 9, 6, 11] and model_partial_milp.ObjBound > 0:
-                    pass
-                elif model_partial_milp.Status not in [2, 9, 6, 11]:
-                    print("Partial milp model was not successful status is", model_partial_milp.Status)
-                    model_partial_milp.write("final.mps")
-                    flag = False
+            # AND
+    constraints_hold = True
+    for or_list in constraints:
+        # OR
+        or_result = False
+        for constraint in or_list:
+            obj = LinExpr()
+            #obj += 1*var_list[785]
+            obj += 1*var_list[counter + true_label]
+            obj += -1*var_list[counter + label]
+            model.setObjective(obj,GRB.MINIMIZE)
+            # model.optimize()
+            if complete:
+                milp_timeout = config.timeout_final_milp if config.timeout_complete is None else (config.timeout_complete + start_milp - time.time())
+                model.setParam(GRB.Param.TimeLimit, milp_timeout)
+                model.optimize(milp_callback)
+            else:
+                model.optimize(lp_callback)
+            # model.computeIIS()
+            #model.write("model_refinegpupo.ilp")
+            try:
+                print(
+                    f"Model status: {model.Status}, Obj val/bound against label {label}: {model.objval:.4f}/{model.objbound:.4f}, Final solve time: {model.Runtime:.3f}")
+            except:
+                print(
+                    f"Model status: {model.Status}, Objval retrival failed, Final solve time: {model.Runtime:.3f}")
+
+            if model.Status == 6 or (model.Status in [2,11] and model.objval > 0):
+                # Cutoff active, or optimal with positive objective => sound against adv_label
+                pass
+            elif partial_milp != 0 and not complete:
+                if model.Status == 2:
+                    x_adv = np.array(model.x[0:len(nn.specLB)])
+                    is_not_shown_unsafe = network.test(x_adv, x_adv, int(true_label))
                 else:
+                    is_not_shown_unsafe = True
+                if not is_not_shown_unsafe:
                     flag = False
-        elif model.Status not in [2, 11, 6]:
-            print("Model was not successful status is",
-                  model.Status)
-            model.write("final.mps")
-            flag = False
-        else:
-            flag = False
-        if not flag and model.Status == 2 and model.objval < 0:
-            if model.objval != math.inf:
-                x = model.x[0:len(nn.specLB)]
+                    print(f"Counterexample found, partial MILP skipped.")
+                else:
+                    obj = LinExpr()
+                    obj += 1 * var_list_partial_milp[counter_partial_milp + true_label]
+                    obj += -1 * var_list_partial_milp[counter_partial_milp + label]
+                    model_partial_milp.setObjective(obj, GRB.MINIMIZE)
+                    model_partial_milp.optimize(milp_callback)
+                    if model_partial_milp.Status == 3:
+                        model_partial_milp.setParam(GRB.Param.FeasibilityTol, 1e-4)
+                        print(f"Infeasible model encountered. Increased tolerance")
+                        model_partial_milp.reset()
+                        model_partial_milp.optimize(milp_callback)
+                    try:
+                        print(
+                            f"Partial MILP model status: {model_partial_milp.Status}, Obj val/bound against label {label}: {model_partial_milp.ObjVal:.4f}/{model_partial_milp.ObjBound:.4f}, Final solve time: {model_partial_milp.Runtime:.3f}")
+                    except:
+                        print(
+                            f"Partial MILP model status: {model_partial_milp.Status}, Obj bound retrival failed, Final solve time: {model_partial_milp.Runtime:.3f}")
 
-        if not flag:
-                break
+                    if model_partial_milp.Status in [2, 9, 6, 11] and model_partial_milp.ObjBound > 0:
+                        pass
+                    elif model_partial_milp.Status not in [2, 9, 6, 11]:
+                        print("Partial milp model was not successful status is", model_partial_milp.Status)
+                        model_partial_milp.write("final.mps")
+                        flag = False
+                    else:
+                        flag = False
+            elif model.Status not in [2, 11, 6]:
+                print("Model was not successful status is",
+                      model.Status)
+                model.write("final.mps")
+                flag = False
+            else:
+                flag = False
+            if not flag and model.Status == 2 and model.objval < 0:
+                if model.objval != math.inf:
+                    x = model.x[0:len(nn.specLB)]
+
+            if not flag:
+                    break
     return flag, x
