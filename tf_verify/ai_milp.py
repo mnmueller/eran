@@ -869,33 +869,21 @@ def verify_network_with_milp(nn, LB_N0, UB_N0, nlb, nub, constraints, spatial_co
     non_adv_val = []
     for or_list in constraints:
         or_result = False
-        for (i, j, k) in or_list:
+        for is_greater_tuple in or_list:
             milp_timeout = config.timeout_final_milp if config.timeout_complete is None else (config.timeout_complete + start_milp - time.time())
             model.setParam(GRB.Param.TimeLimit, milp_timeout)
-            obj = LinExpr()
-            if j == -1: # var[i] > k
-                obj += 1 * var_list[counter + i] - float(k)
-                model.setObjective(obj, GRB.MINIMIZE)
-            elif i == -1: # var[j] < k
-                obj += float(k) - 1 * var_list[counter + j]
-                model.setObjective(obj, GRB.MINIMIZE)
-            else:
-                if i!=j: # var[i] > var[j]
-                    obj += 1*var_list[counter + i]
-                    obj += -1*var_list[counter + j]
-                    model.setObjective(obj, GRB.MINIMIZE)
+
+            obj = obj_from_is_greater_tuple(is_greater_tuple, var_list, counter)
+            model.setObjective(obj, GRB.MINIMIZE)
             model.optimize(milp_callback)
-            assert model.status not in [3,4], f"\nInfeasible model encountered. Model status {model.status}\n"
-            try:
-                print(
-                    f"MILP model status: {model.Status}, Obj val/bound against label {j}: {model.objval:.4f}/{model.objbound:.4f}, Final solve time: {model.Runtime:.3f}")
-            except:
-                print(
-                    f"MILP model status: {model.Status}, Objval retrival failed, Final solve time: {model.Runtime:.3f}")
+
+            assert model.status not in [3, 4], f"\nInfeasible model encountered. Model status {model.status}\n"
+            obj_bound = f"{model.objbound:.4f}" if hasattr(model,"objbound") else "failed"
+            obj_val = f"{model.objval:.4f}" if hasattr(model, "objval") else "failed"
+            print(f"MILP model status: {model.Status}, Obj val/bound for constraint {is_greater_tuple}: {obj_val}/{obj_bound}, Final solve time: {model.Runtime:.3f}")
 
             if model.objbound > 0:
                 or_result = True
-                #print("objbound ", model.objbound)
                 if model.solcount > 0:
                     non_adv_examples.append(model.x[0:input_size])
                     non_adv_val.append(model.objval)
@@ -914,3 +902,78 @@ def verify_network_with_milp(nn, LB_N0, UB_N0, nlb, nub, constraints, spatial_co
     else:
         return True, None, None
 
+def evaluate_models(model_lp, var_list_lp, counter_lp, input_len, contraints, terminate_on_failure, model_p_milp=None,
+                    var_list_p_milp=None, counter_p_milp=None):
+    adex_list = []
+    label_failed = []
+    and_result = True
+    for or_list in contraints:
+        # OR
+        or_result = False
+        adex_list_or = []
+        for is_greater_tuple in or_list:
+            obj = obj_from_is_greater_tuple(is_greater_tuple, var_list_lp, counter_lp)
+            model_lp.setObjective(obj, GRB.MINIMIZE)
+
+            model_lp.optimize()
+            obj_bound = f"{model_lp.objbound:.4f}" if hasattr(model_lp,"objbound") else "failed"
+            obj_val = f"{model_lp.objval:.4f}" if hasattr(model_lp, "objval") else "failed"
+            print(f"Model status: {model_lp.Status}, Obj val/bound for constraint {is_greater_tuple}: {obj_val}/{obj_bound}, Final solve time: {model_lp.Runtime:.3f}")
+
+            if model_lp.Status == 6 or (model_lp.Status in [2, 9, 11] and model_lp.objval > 0):
+                # Cutoff active, or optimal with positive objective => sound against adv_label
+                or_result = True
+                break
+            elif model_p_milp is not None:
+                obj = obj_from_is_greater_tuple(is_greater_tuple, var_list_p_milp, counter_p_milp)
+                model_p_milp.setObjective(obj, GRB.MINIMIZE)
+                model_p_milp.optimize(milp_callback)
+                obj_bound = f"{model_p_milp.objbound:.4f}" if hasattr(model_p_milp, "objbound") else "failed"
+                obj_val = f"{model_p_milp.objval:.4f}" if hasattr(model_p_milp, "objval") else "failed"
+                print(f"Partial MILP model status: {model_p_milp.Status}, Obj val/bound for constraint {is_greater_tuple}: {obj_val}/{obj_bound}, Final solve time: {model_p_milp.Runtime:.3f}")
+
+                if model_p_milp.Status in [2, 6, 9, 11] and model_p_milp.ObjBound > 0:
+                    or_result = True
+                    break
+                elif model_p_milp.Status not in [2, 6, 9, 11]:
+                    print("Partial milp model was not successful status is", model_p_milp.Status)
+                    model_p_milp.write("final.mps")
+                    assert model_p_milp.Status not in [3, 4], "Infeasible partial MILP model encountered"
+                elif model_p_milp.SolCount > 0:
+                    adex_list_or.append(model_p_milp.x[0:input_len])
+                else:
+                    pass
+            elif model_lp.Status not in [2, 6, 9, 11]:
+                print("Model was not successful status is", model_lp.Status)
+                model_lp.write("final.mps")
+                assert model_lp.Status not in [3, 4], "Infeasible model encountered"
+                pass
+            elif model_lp.SolCount > 0:
+                adex_list_or.append(model_lp.x[0:input_len])
+            else:
+                pass
+
+        if not or_result:
+            and_result = False
+            label_failed.append(is_greater_tuple[1])
+            adex_list += adex_list_or
+            if terminate_on_failure:
+                break
+
+    return and_result, label_failed, adex_list
+
+
+def obj_from_is_greater_tuple(is_greater_tuple, var_list, counter):
+    obj = LinExpr()
+    (i, j, k) = is_greater_tuple
+
+    if j == -1:  # var[i] > k
+        obj += 1 * var_list[counter + i] - float(k)
+    elif i == -1:  # var[j] < k
+        obj += float(k) - 1 * var_list[counter + j]
+    elif i != j:  # var[i] > var[j]
+        obj += 1 * var_list[counter + i]
+        obj += -1 * var_list[counter + j]
+    else:
+        assert False, f"invalid constraint encountered {is_greater_tuple}"
+    return obj

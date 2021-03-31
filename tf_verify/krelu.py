@@ -131,10 +131,11 @@ def sparse_heuristic_with_cutoff(length, lb, ub, K=3, s=-2):
     for var in all_vars:
         kact_args.append([var])
 
-    print("krelu: n", config.sparse_n,
-          "split_zero", len(all_vars),
-          "after cutoff", n_vars_above_cutoff,
-          "number of args", len(kact_args))
+    if config.debug:
+        print("krelu: n", config.sparse_n,
+              "split_zero", len(all_vars),
+              "after cutoff", n_vars_above_cutoff,
+              "number of args", len(kact_args))
 
     return kact_args
 
@@ -170,10 +171,11 @@ def sparse_heuristic_curve(length, lb, ub, is_sigm, s=-2):
 
     # kact_args = [arg for arg in kact_args if len(arg) == 3]
 
-    print("krelu: n", config.sparse_n,
-          "after cutoff", n_vars_after_cutoff,
-          "number of args", len(kact_args),
-          "Sigm" if is_sigm else "Tanh")
+    if config.debug:
+        print("krelu: n", config.sparse_n,
+              "after cutoff", n_vars_after_cutoff,
+              "number of args", len(kact_args),
+              "Sigm" if is_sigm else "Tanh")
 
     return kact_args
 

@@ -19,6 +19,7 @@ from elina_abstract0 import *
 from elina_manager import *
 from deeppoly_nodes import *
 from deepzono_nodes import *
+from ai_milp import evaluate_models
 from functools import reduce
 from ai_milp import milp_callback
 import gc
@@ -173,7 +174,7 @@ class Analyzer:
         testing_nlb = []
         testing_nub = []
         for i in range(1, len(self.ir_list)):
-            if type(self.ir_list[i]) in [DeeppolyReluNode,DeeppolySigmoidNode,DeeppolyTanhNode,DeepzonoRelu,DeepzonoSigmoid,DeepzonoTanh]:
+            if type(self.ir_list[i]) in [DeeppolyReluNode, DeeppolySigmoidNode, DeeppolyTanhNode, DeepzonoRelu, DeepzonoSigmoid, DeepzonoTanh]:
                 element_test_bounds = self.ir_list[i].transformer(self.nn, self.man, element, nlb, nub,
                                                                   self.relu_groups, 'refine' in self.domain,
                                                                   self.timeout_lp, self.timeout_milp,
@@ -250,6 +251,10 @@ class Analyzer:
                                                                                                max_milp_neurons=self.max_milp_neurons)
                 model_partial_milp.setParam(GRB.Param.TimeLimit, self.timeout_final_milp)
                 model_partial_milp.setParam(GRB.Param.Cutoff, 0.01)
+            else:
+                model_partial_milp = None
+                var_list_partial_milp = None
+                counter_partial_milp = None
 
 
 
@@ -290,6 +295,7 @@ class Analyzer:
         for constrain_key in constraint_dict.keys():
             # AND
             and_result = True
+            failed_constraints = []
             for or_list in constraint_dict[constrain_key]:
                 # OR
                 or_result = False
@@ -314,176 +320,27 @@ class Analyzer:
                                                self.use_default_heuristic):
                                 or_result = True
                                 break
-
-                for is_greater_tuple in or_list:
-                    if self.domain == "refinepoly":
-                        obj = LinExpr()
-                        (i, j, k) = is_greater_tuple
-                        if j == -1:  # var[i] > k
-                            obj += 1 * var_list[counter + i] - float(k)
-                        elif i == -1:  # var[j] < k
-                            obj += float(k) - 1 * var_list[counter + j]
-                        elif i != j:  # var[i] > var[j]
-                            obj += 1 * var_list[counter + i]
-                            obj += -1 * var_list[counter + j]
-                        else:
-                            assert False, f"invalid constraint encountered {is_greater_tuple}"
-                        model.setObjective(obj, GRB.MINIMIZE)
-
-                        model.optimize()
-                        try:
-                            print(f"Model status: {model.Status}, Obj val/bound for constraint {is_greater_tuple}: {model.objval:.4f}/{model.objbound:.4f}, Final solve time: {model.Runtime:.3f}")
-                        except:
-                            print(f"Model status: {model.Status}, Obj val/bound retrival failed for constraint {is_greater_tuple}, Final solve time: {model.Runtime:.3f}")
-
-                        if model.Status == 6 or (model.Status == 2 and model.objval > 0):
-                            # Cutoff active, or optimal with positive objective => sound against adv_label
-                            or_result = True
-                            break
-                        elif self.partial_milp != 0:
-                            obj = LinExpr()
-                            if j == -1:  # var[i] > k
-                                obj += 1 * var_list_partial_milp[counter_partial_milp + i] - float(k)
-                            elif i == -1:  # var[j] < k
-                                obj += float(k) - 1 * var_list_partial_milp[counter_partial_milp + j]
-                            elif i != j:  # var[i] > var[j]
-                                obj += 1 * var_list_partial_milp[counter_partial_milp + i]
-                                obj += -1 * var_list_partial_milp[counter_partial_milp + j]
-                            else:
-                                assert False, f"invalid constraint encountered {is_greater_tuple}"
-                            model_partial_milp.setObjective(obj, GRB.MINIMIZE)
-                            model_partial_milp.optimize(milp_callback)
-                            try:
-                                print(f"Partial MILP model status: {model_partial_milp.Status}, Obj val/bound for constraint {is_greater_tuple}: {model_partial_milp.objval:.4f}/{model_partial_milp.objbound:.4f}, Final solve time: {model_partial_milp.Runtime:.3f}")
-                            except:
-                                print(f"Partial MILP model status: {model_partial_milp.Status}, Obj val/bound retrival failed for constraint {is_greater_tuple}, Final solve time: {model_partial_milp.Runtime:.3f}")
-
-                            if model_partial_milp.Status in [2, 6, 9, 11] and model_partial_milp.ObjBound > 0:
-                                or_result = True
-                                break
-                            elif model_partial_milp.Status not in [2, 6, 9, 11]:
-                                print("Partial milp model was not successful status is", model_partial_milp.Status)
-                                model_partial_milp.write("final.mps")
-                                assert model_partial_milp.Status not in [3,4], "Infeasible partial MILP model encountered"
-                            elif model_partial_milp.SolCount>0:
-                                adex_list_or.append(model_partial_milp.x[0:len(self.nn.specLB)])
-                            else:
-                                pass
-                        elif model.Status not in [2, 6, 9, 11]:
-                            print("Model was not successful status is", model.Status)
-                            model.write("final.mps")
-                            assert model.Status not in [3, 4], "Infeasible model encountered"
-                            pass
-                        elif model.SolCount>0:
-                            adex_list_or.append(model.x[0:len(self.nn.specLB)])
-                        else:
-                            pass
-
                 if not or_result:
                     and_result = False
-                    if len(constraint_dict.keys()) == 1:
-                        label_failed.append(is_greater_tuple[1])
-                        adex_list += adex_list_or
-                    if terminate_on_failure:
-                        break
+                    failed_constraints.append(or_list)
+            if self.domain == 'refinepoly' and not and_result:
+                and_result, label_failed_and, adex_list_and = evaluate_models(model, var_list, counter,
+                                                                              len(self.nn.specLB), failed_constraints,
+                                                                              terminate_on_failure, model_partial_milp,
+                                                                              var_list_partial_milp,
+                                                                              counter_partial_milp)
+
+                if len(constraint_dict.keys()) == 1:
+                    label_failed += label_failed_and
+                    adex_list += adex_list_and
+            elif len(constraint_dict.keys()) == 1 and len(failed_constraints)>0 and all([len(x)==1 for x in failed_constraints]):
+                # Do not return failed labels when testing for multiple "true" labels
+                # Only return failed labels, when all or clauses have only one element
+                label_failed += [x[0][1] for x in failed_constraints]
 
             if and_result:
                 dominant_class = constrain_key
                 break
-
-        #     for label in candidate_labels:
-        #         flag = True
-        #         for adv_label in adv_labels:
-        #             if self.domain == 'deepzono' or self.domain == 'refinezono':
-        #                 if label == adv_label:
-        #                     continue
-        #                 elif self.is_greater(self.man, element, label, adv_label):
-        #                     continue
-        #                 else:
-        #                     flag = False
-        #                     label_failed.append(adv_label)
-        #                     if terminate_on_failure:
-        #                         break
-        #             else:
-        #                 if label == adv_label:
-        #                     continue
-        #                 elif self.is_greater(self.man, element, label, adv_label, self.use_default_heuristic):
-        #                     continue
-        #                 else:
-        #                     if(self.domain=='refinepoly'):
-        #                         obj = LinExpr()
-        #                         obj += 1 * var_list[counter + label]
-        #                         obj += -1 * var_list[counter + adv_label]
-        #                         model.setObjective(obj, GRB.MINIMIZE)
-        #                         if self.complete:
-        #                             model.optimize(milp_callback)
-        #                             if not hasattr(model,"objbound") or model.objbound <= 0:
-        #                                 flag = False
-        #                                 if self.label != -1:
-        #                                     label_failed.append(adv_label)
-        #                                 if model.solcount > 0:
-        #                                     x = model.x[0:len(self.nn.specLB)]
-        #                                 if terminate_on_failure:
-        #                                     break
-        #                         else:
-        #                             model.optimize(lp_callback)
-        #                             # model.optimize()
-        #                             # if model.Status == 11:
-        #                             #     model.optimize() #very rarely lp_callback seems to leave model in interrupted state
-        #
-        #                             try:
-        #                                 print(
-        #                                     f"Model status: {model.Status}, Objval against label {adv_label}: {model.objval:.4f}, Final solve time: {model.Runtime:.3f}")
-        #                             except:
-        #                                 print(
-        #                                     f"Model status: {model.Status}, Objval retrival failed, Final solve time: {model.Runtime:.3f}")
-        #
-        #                             if model.Status == 6 or (model.Status == 2 and model.objval > 0):
-        #                                 # Cutoff active, or optimal with positive objective => sound against adv_label
-        #                                 pass
-        #                             elif self.partial_milp != 0:
-        #                                 obj = LinExpr()
-        #                                 obj += 1 * var_list_partial_milp[counter_partial_milp + label]
-        #                                 obj += -1 * var_list_partial_milp[counter_partial_milp + adv_label]
-        #                                 model_partial_milp.setObjective(obj, GRB.MINIMIZE)
-        #                                 model_partial_milp.optimize(milp_callback)
-        #                                 try:
-        #                                     print(
-        #                                         f"Partial MILP model status: {model_partial_milp.Status}, Objbound against label {adv_label}: {model_partial_milp.ObjBound:.4f}, Final solve time: {model_partial_milp.Runtime:.3f}")
-        #                                 except:
-        #                                     print(
-        #                                         f"Partial MILP model status: {model_partial_milp.Status}, Objbound retrival failed, Final solve time: {model_partial_milp.Runtime:.3f}")
-        #
-        #                                 if model_partial_milp.Status in [2,9,11] and model_partial_milp.ObjBound > 0:
-        #                                     pass
-        #                                 elif model_partial_milp.Status not in [2,9,11]:
-        #                                     print("Partial milp model was not successful status is", model_partial_milp.Status)
-        #                                     model_partial_milp.write("final.mps")
-        #                                     flag = False
-        #                                 else:
-        #                                     flag = False
-        #                             elif model.Status != 2:
-        #                                 print("Model was not successful status is",
-        #                                       model.Status)
-        #                                 model.write("final.mps")
-        #                                 flag = False
-        #                             else:
-        #                                 flag = False
-        #                             if flag and model.Status==2 and model.objval < 0:
-        #                                 if model.objval != math.inf:
-        #                                     x = model.x[0:len(self.nn.specLB)]
-        #
-        #                     else:
-        #                         flag = False
-        #             if not flag:
-        #                 if terminate_on_failure:
-        #                     break
-        #                 elif self.label != -1:
-        #                     label_failed.append(adv_label)
-        #         if flag:
-        #             dominant_class = label
-        #             break
-        # else:
 
         label_failed = label_failed if len(label_failed) > 0 else None
         adex_list = adex_list if len(adex_list) > 0 else None

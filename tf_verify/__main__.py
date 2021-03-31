@@ -1323,47 +1323,36 @@ else:
         if config.quant_step:
             specLB = np.round(specLB/config.quant_step)
             specUB = np.round(specUB/config.quant_step)
-        #cifarfile = open('/home/gagandeepsi/eevbnn/input.txt', 'r')
-        
-        #cifarimages = csv.reader(cifarfile, delimiter=',')
-        #for _, image in enumerate(cifarimages):
-        #    specLB = np.float64(image)
-        #specUB = np.copy(specLB)
+
         normalize(specLB, means, stds, dataset)
         normalize(specUB, means, stds, dataset)
 
-
-        #print("specLB ", len(specLB), "specUB ", specUB)
-        is_correctly_classified = False
         start = time.time()
+
         if domain == 'gpupoly' or domain == 'refinegpupoly':
-            #specLB = np.reshape(specLB, (32,32,3))#np.ascontiguousarray(specLB, dtype=np.double)
-            #specUB = np.reshape(specUB, (32,32,3))
-            #print("specLB ", specLB)
-            is_correctly_classified = network.test(specLB, specUB, int(test[0]), True)
+            net_out = network.eval(specLB)
+            label = np.argmax(net_out[:, 0])
         else:
             label, nn, nlb, nub, _, _ = eran.analyze_box(specLB, specUB, init_domain(domain), config.timeout_lp, config.timeout_milp, config.use_default_heuristic)
-            if config.debug:
-                print("concrete ", nlb[-1])
-            if label == int(test[0]):
-                is_correctly_classified = True
-        #for number in range(len(nub)):
-        #    for element in range(len(nub[number])):
-        #        if(nub[number][element]<=0):
-        #            print('False')
-        #        else:
-        #            print('True')
+            net_out = nlb[-1]
+
+        if config.debug:
+            print("concrete ", net_out)
+
+        is_correctly_classified = label == int(test[0])
+
         if config.epsfile!= None:
             epsilon = np.float64(eps_array[i])
         
-        #if(label == int(test[0])):
-        if is_correctly_classified == True:
-            label = int(test[0])
-            perturbed_label = None
-            correctly_classified_images +=1
+        if is_correctly_classified:
+            # Only attemp certificaiton for correctly classified samples
+            perturbed_label = -1
+            correctly_classified_images += 1
+            is_verified = False
+
             if config.normalized_region==True:
-                specLB = np.clip(image - epsilon,0,1)
-                specUB = np.clip(image + epsilon,0,1)
+                specLB = np.clip(image - epsilon, 0, 1)
+                specUB = np.clip(image + epsilon, 0, 1)
                 normalize(specLB, means, stds, dataset)
                 normalize(specUB, means, stds, dataset)
             else:
@@ -1383,41 +1372,13 @@ else:
                 is_verified = network.test(specLB, specUB, int(test[0]))
                 #print("res ", res)
                 if is_verified:
-                    print("img", i, "Verified", int(test[0]))
-                    verified_images+=1
+                    perturbed_label = label
                 elif domain == 'refinegpupoly':
-                    num_outputs = len(nn.weights[-1])
-
-                    # Matrix that computes the difference with the expected layer.
-                    diffMatrix = np.delete(-np.eye(num_outputs), int(test[0]), 0)
-                    diffMatrix[:, label] = 1
-                    diffMatrix = diffMatrix.astype(np.float64)
-                    
-                    # gets the values from GPUPoly.
-                    res = network.evalAffineExpr(diffMatrix, back_substitute=network.BACKSUBSTITUTION_WHILE_CONTAINS_ZERO)
-                    
-                    
-                    labels_to_be_verified = []
-                    var = 0
                     nn.specLB = specLB
                     nn.specUB = specUB
-                    nn.predecessors = []
-                    
-                    for pred in range(0, nn.numlayer+1):
-                        predecessor = np.zeros(1, dtype=np.int)
-                        predecessor[0] = int(pred-1)
-                        nn.predecessors.append(predecessor)
-                    #print("predecessors ", nn.predecessors[0][0])
-                    for labels in range(num_outputs):
-                        #print("num_outputs ", num_outputs, nn.numlayer, len(nn.weights[-1]))
-                        if labels != int(test[0]):
-                            if res[var][0] < 0:
-                                labels_to_be_verified.append(labels)
-                            var = var+1
-                    #print("relu layers", relu_layers)
 
-                    is_verified, x = refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, int(test[0]),
-                                                            labels_to_be_verified, K=config.k, s=config.s,
+                    perturbed_label, nn, nlb, nub, failed_labels, x = refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, label,
+                                                            adv_labels=prop, K=config.k, s=config.s,
                                                             complete=config.complete,
                                                             timeout_final_lp=config.timeout_final_lp,
                                                             timeout_final_milp=config.timeout_final_milp,
@@ -1427,27 +1388,9 @@ else:
                                                             partial_milp=config.partial_milp,
                                                             max_milp_neurons=config.max_milp_neurons,
                                                             approx=config.approx_k)
-                    if is_verified:
-                        print("img", i, "Verified", int(test[0]))
-                        verified_images += 1
-                    else:
-                        if x != None:
-                            adv_image = np.array(x)
-                            res = np.argmax((network.eval(adv_image))[:,0])
-                            if res!=int(test[0]):
-                                denormalize(x,means, stds, dataset)
-                                # print("img", i, "Verified unsafe with adversarial image ", adv_image, "cex label", cex_label, "correct label ", int(test[0]))
-                                print("img", i, "Verified unsafe against label ", res, "correct label ", int(test[0]))
-                                unsafe_images += 1
-
-                            else:
-                                print("img", i, "Failed")
-                        else:
-                            print("img", i, "Failed")
-                else:
-                    print("img", i, "Failed")
             else:
                 if domain.endswith("poly"):
+                    # First do a cheap pass without PRIMA
                     perturbed_label, _, nlb, nub, failed_labels, x = eran.analyze_box(specLB, specUB, "deeppoly",
                                                                                       config.timeout_lp,
                                                                                       config.timeout_milp,
@@ -1457,12 +1400,14 @@ else:
                                                                                       timeout_final_milp=config.timeout_final_milp,
                                                                                       use_milp=False,
                                                                                       complete=False,
-                                                                                      terminate_on_failure=(not config.complete or domain == "refinepoly"),
+                                                                                      terminate_on_failure=(not config.complete or domain != "refinepoly"),
                                                                                       partial_milp=0,
                                                                                       max_milp_neurons=0,
                                                                                       approx_k=0)
-                    print("nlb ", nlb[-1], " nub ", nub[-1],"adv labels ", failed_labels)
-                if not domain.endswith("poly") or not (perturbed_label==label):
+                    if config.debug:
+                        print("nlb ", nlb[-1], " nub ", nub[-1],"adv labels ", failed_labels)
+                if perturbed_label != label and (not domain.endswith("poly") or "refine" in domain):
+                    # Do a second more precise run, for refinepoly
                     perturbed_label, _, nlb, nub, failed_labels, x = eran.analyze_box(specLB, specUB, domain,
                                                                                       config.timeout_lp,
                                                                                       config.timeout_milp,
@@ -1477,58 +1422,54 @@ else:
                                                                                       partial_milp=config.partial_milp,
                                                                                       max_milp_neurons=config.max_milp_neurons,
                                                                                       approx_k=config.approx_k)
-                    print("nlb ", nlb[-1], " nub ", nub[-1], "adv labels ", failed_labels)
-                if (perturbed_label==label):
-                    print("img", i, "Verified", label)
-                    verified_images += 1
-                else:
-                    if complete==True and failed_labels is not None:
-                        failed_labels = list(set(failed_labels))
-                        constraints = get_constraints_for_dominant_label(label, failed_labels)
-                        verified_flag, adv_image, adv_val = verify_network_with_milp(nn, specLB, specUB, nlb, nub, constraints)
-                        if(verified_flag==True):
-                            print("img", i, "Verified as Safe using MILP", label)
-                            verified_images += 1
-                        else:
-                            if adv_image != None:
-                                cex_label,_,_,_,_,_ = eran.analyze_box(adv_image[0], adv_image[0], 'deepzono', config.timeout_lp, config.timeout_milp, config.use_default_heuristic, approx_k=config.approx_k)
-                                if(cex_label!=label):
-                                    denormalize(adv_image[0], means, stds, dataset)
-                                    # print("img", i, "Verified unsafe with adversarial image ", adv_image, "cex label", cex_label, "correct label ", label)
-                                    print("img", i, "Verified unsafe against label ", cex_label, "correct label ", label)
-                                    unsafe_images+=1
-                                else:
-                                    print("img", i, "Failed with MILP, without a adeversarial example")
-                            else:
-                                print("img", i, "Failed with MILP")
+                    if config.debug:
+                        print("nlb ", nlb[-1], " nub ", nub[-1], "adv labels ", failed_labels)
+            if perturbed_label == label:
+                is_verified = True
+                print("img", i, "Verified", label)
+                verified_images += 1
+            else:
+                if complete and (failed_labels is not None):
+                    failed_labels = list(set(failed_labels))
+                    constraints = get_constraints_for_dominant_label(label, failed_labels)
+                    is_verified, adv_image, adv_val = verify_network_with_milp(nn, specLB, specUB, nlb, nub, constraints)
+                    if is_verified:
+                        print("img", i, "Verified", label, "using MILP against", failed_labels)
+                        verified_images += 1
                     else:
-                        if x != None:
-                            for x_i in x:
+                        if adv_image != None:
+                            if x is None:
+                                x = adv_image
+                            else:
+                                x += adv_image
+                if not is_verified:
+                    if x is not None:
+                        for x_i in x:
+                            if "gpu" in domain:
+                                adv_image = np.array(x)
+                                cex_label = np.argmax((network.eval(adv_image))[:, 0])
+                            else:
                                 cex_label,_,_,_,_,_ = eran.analyze_box(x_i,x_i,'deepzono',config.timeout_lp, config.timeout_milp, config.use_default_heuristic, approx_k=config.approx_k)
-                                print("adex evaluates to label ", cex_label, " but true label is ", label)
-                                if(cex_label!=label):
-                                    denormalize(x_i, means, stds, dataset)
-                                    # print("img", i, "Verified unsafe with adversarial image ", x, "cex label ", cex_label, "correct label ", label)
-                                    print("img", i, "Verified unsafe against label ", cex_label, "correct label ", label)
-                                    unsafe_images += 1
-                                    break
-                            if (cex_label == label): #effectively if not break was triggered
-                                print("img", i, "Failed, without a adversarial example")
-                        else:
-                            print("img", i, "Failed")
+                            if cex_label != label:
+                                denormalize(x_i, means, stds, dataset)
+                                print(f"img {i} Failed, with adversarial example with label {cex_label}. Correct label is {label}")
+                                unsafe_images += 1
+                                break
+                        if cex_label == label: #effectively if not break was triggered
+                            print(f"img {i} Failed, without a adversarial example")
+                    else:
+                        print(f"img {i} Failed")
 
-            end = time.time()
-            cum_time += end - start # only count samples where we did try to certify
         else:
-            print("img",i,"not considered, incorrectly classified")
-            end = time.time()
+            print(f"img {i} not considered, incorrectly classified")
+
+        end = time.time()
+        cum_time += end - start # only count samples where we did try to certify
 
         print(f"progress: {1 + i - config.from_test}/{config.num_tests}, "
               f"correct:  {correctly_classified_images}/{1 + i - config.from_test}, "
-              f"verified: {verified_images}/{correctly_classified_images}, "
-              f"unsafe: {unsafe_images}/{correctly_classified_images}, ",
+              f"verified: {verified_images}/{correctly_classified_images-unsafe_images}, "
+              f"unsafe: {unsafe_images}/{correctly_classified_images-verified_images}, ",
               f"time: {end - start:.3f}; {0 if cum_time==0 else cum_time / correctly_classified_images:.3f}; {cum_time:.3f}")
 
-
-
-    print('analysis precision ',verified_images,'/ ', correctly_classified_images)
+    print('analysis precision ', verified_images, '/ ', correctly_classified_images)

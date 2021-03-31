@@ -2,10 +2,20 @@ from optimizer import *
 from krelu import *
 from constraint_utils import get_constraints_for_dominant_label
 import time
+from ai_milp import evaluate_models
 
-def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label, labels_to_be_verified=None, K=3, s=-2,
+
+def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label, adv_labels=-1, K=3, s=-2,
                            timeout_lp=10, timeout_milp=10, timeout_final_lp=100, timeout_final_milp=100, use_milp=False,
-                           partial_milp=False, max_milp_neurons=30, complete=False, approx=True, constraints=None):
+                           partial_milp=False, max_milp_neurons=30, complete=False, approx=True, constraints=None,
+                           terminate_on_failure = True):
+    nn.predecessors = []
+    for pred in range(0, nn.numlayer + 1):
+        predecessor = np.zeros(1, dtype=np.int)
+        predecessor[0] = int(pred - 1)
+        nn.predecessors.append(predecessor)
+    # print("predecessors ", nn.predecessors[0][0])
+
     relu_groups = []
     nlb = []
     nub = []
@@ -161,14 +171,10 @@ def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label,
                                                                                        max_milp_neurons=max_milp_neurons)
         model_partial_milp.setParam(GRB.Param.TimeLimit, timeout_final_milp)
         model_partial_milp.setParam(GRB.Param.Cutoff, 0.01)
-
-        # a1=time.time()
-        # model_partial_milp.optimize()
-        # if model_partial_milp.Status==3:
-        #     model_partial_milp.setParam(GRB.Param.FeasibilityTol, 1e-4)
-        #     print(f"Infeasible model encountered. Increased tolerance")
-        # a2=time.time()
-        # print(f"time for feasibility check: {a2-a1:.3f}")
+    else:
+        model_partial_milp = None
+        var_list_partial_milp = None
+        counter_partial_milp = None
 
     # num_var = len(var_list)
     #output_size = num_var - counter
@@ -176,85 +182,31 @@ def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label,
     flag = True
     x = None
 
-    if labels_to_be_verified is not None:
-        constraints += get_constraints_for_dominant_label(true_label, labels_to_be_verified)
+    if len(constraints) == 0 or adv_labels != -1:
+        num_outputs = len(nn.weights[-1])
 
-            # AND
-    constraints_hold = True
-    for or_list in constraints:
-        # OR
-        or_result = False
-        for constraint in or_list:
-            obj = LinExpr()
-            #obj += 1*var_list[785]
-            obj += 1*var_list[counter + true_label]
-            obj += -1*var_list[counter + label]
-            model.setObjective(obj,GRB.MINIMIZE)
-            # model.optimize()
-            if complete:
-                milp_timeout = config.timeout_final_milp if config.timeout_complete is None else (config.timeout_complete + start_milp - time.time())
-                model.setParam(GRB.Param.TimeLimit, milp_timeout)
-                model.optimize(milp_callback)
-            else:
-                model.optimize(lp_callback)
-            # model.computeIIS()
-            #model.write("model_refinegpupo.ilp")
-            try:
-                print(
-                    f"Model status: {model.Status}, Obj val/bound against label {label}: {model.objval:.4f}/{model.objbound:.4f}, Final solve time: {model.Runtime:.3f}")
-            except:
-                print(
-                    f"Model status: {model.Status}, Objval retrival failed, Final solve time: {model.Runtime:.3f}")
+        # Matrix that computes the difference with the expected layer.
+        diffMatrix = np.delete(-np.eye(num_outputs), true_label, 0)
+        diffMatrix[:, true_label] = 1
+        diffMatrix = diffMatrix.astype(np.float64)
 
-            if model.Status == 6 or (model.Status in [2,11] and model.objval > 0):
-                # Cutoff active, or optimal with positive objective => sound against adv_label
-                pass
-            elif partial_milp != 0 and not complete:
-                if model.Status == 2:
-                    x_adv = np.array(model.x[0:len(nn.specLB)])
-                    is_not_shown_unsafe = network.test(x_adv, x_adv, int(true_label))
-                else:
-                    is_not_shown_unsafe = True
-                if not is_not_shown_unsafe:
-                    flag = False
-                    print(f"Counterexample found, partial MILP skipped.")
-                else:
-                    obj = LinExpr()
-                    obj += 1 * var_list_partial_milp[counter_partial_milp + true_label]
-                    obj += -1 * var_list_partial_milp[counter_partial_milp + label]
-                    model_partial_milp.setObjective(obj, GRB.MINIMIZE)
-                    model_partial_milp.optimize(milp_callback)
-                    if model_partial_milp.Status == 3:
-                        model_partial_milp.setParam(GRB.Param.FeasibilityTol, 1e-4)
-                        print(f"Infeasible model encountered. Increased tolerance")
-                        model_partial_milp.reset()
-                        model_partial_milp.optimize(milp_callback)
-                    try:
-                        print(
-                            f"Partial MILP model status: {model_partial_milp.Status}, Obj val/bound against label {label}: {model_partial_milp.ObjVal:.4f}/{model_partial_milp.ObjBound:.4f}, Final solve time: {model_partial_milp.Runtime:.3f}")
-                    except:
-                        print(
-                            f"Partial MILP model status: {model_partial_milp.Status}, Obj bound retrival failed, Final solve time: {model_partial_milp.Runtime:.3f}")
+        # gets the values from GPUPoly.
+        res = network.evalAffineExpr(diffMatrix, back_substitute=network.BACKSUBSTITUTION_WHILE_CONTAINS_ZERO)
 
-                    if model_partial_milp.Status in [2, 9, 6, 11] and model_partial_milp.ObjBound > 0:
-                        pass
-                    elif model_partial_milp.Status not in [2, 9, 6, 11]:
-                        print("Partial milp model was not successful status is", model_partial_milp.Status)
-                        model_partial_milp.write("final.mps")
-                        flag = False
-                    else:
-                        flag = False
-            elif model.Status not in [2, 11, 6]:
-                print("Model was not successful status is",
-                      model.Status)
-                model.write("final.mps")
-                flag = False
-            else:
-                flag = False
-            if not flag and model.Status == 2 and model.objval < 0:
-                if model.objval != math.inf:
-                    x = model.x[0:len(nn.specLB)]
+        var = 0
+        for label in range(num_outputs):
+            if label != true_label:
+                if res[var][0] < 0:
+                    # add constraints that could not be proven using standard gpupoly for evaluation with
+                    constraints.append([(true_label, label, 0)])
+                var = var + 1
 
-            if not flag:
-                    break
-    return flag, x
+    constraints_hold, failed_labels, adex_list = evaluate_models(model, var_list, counter, len(nn.specLB), constraints,
+                                                                 terminate_on_failure, model_partial_milp,
+                                                                 var_list_partial_milp, counter_partial_milp)
+    dominant_class = true_label if constraints_hold else -1
+
+    failed_labels = failed_labels if len(failed_labels) > 0 else None
+    adex_list = adex_list if len(adex_list) > 0 else None
+
+    return dominant_class, nn, nlb, nub, failed_labels, adex_list
