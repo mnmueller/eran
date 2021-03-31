@@ -1503,14 +1503,16 @@ else:
                                 print("img", i, "Failed with MILP")
                     else:
                         if x != None:
-                            cex_label,_,_,_,_,_ = eran.analyze_box(x,x,'deepzono',config.timeout_lp, config.timeout_milp, config.use_default_heuristic, approx_k=config.approx_k)
-                            print("cex label ", cex_label, "label ", label)
-                            if(cex_label!=label):
-                                denormalize(x,means, stds, dataset)
-                                # print("img", i, "Verified unsafe with adversarial image ", x, "cex label ", cex_label, "correct label ", label)
-                                print("img", i, "Verified unsafe against label ", cex_label, "correct label ", label)
-                                unsafe_images += 1
-                            else:
+                            for x_i in x:
+                                cex_label,_,_,_,_,_ = eran.analyze_box(x_i,x_i,'deepzono',config.timeout_lp, config.timeout_milp, config.use_default_heuristic, approx_k=config.approx_k)
+                                print("adex evaluates to label ", cex_label, " but true label is ", label)
+                                if(cex_label!=label):
+                                    denormalize(x_i, means, stds, dataset)
+                                    # print("img", i, "Verified unsafe with adversarial image ", x, "cex label ", cex_label, "correct label ", label)
+                                    print("img", i, "Verified unsafe against label ", cex_label, "correct label ", label)
+                                    unsafe_images += 1
+                                    break
+                            if (cex_label == label): #effectively if not break was triggered
                                 print("img", i, "Failed, without a adversarial example")
                         else:
                             print("img", i, "Failed")

@@ -332,9 +332,9 @@ class Analyzer:
 
                         model.optimize()
                         try:
-                            print(f"Model status: {model.Status}, Objval against label {adv_label}: {model.objval:.4f}, Final solve time: {model.Runtime:.3f}")
+                            print(f"Model status: {model.Status}, Obj val/bound for constraint {is_greater_tuple}: {model.objval:.4f}/{model.objbound:.4f}, Final solve time: {model.Runtime:.3f}")
                         except:
-                            print(f"Model status: {model.Status}, Objval retrival failed, Final solve time: {model.Runtime:.3f}")
+                            print(f"Model status: {model.Status}, Obj val/bound retrival failed for constraint {is_greater_tuple}, Final solve time: {model.Runtime:.3f}")
 
                         if model.Status == 6 or (model.Status == 2 and model.objval > 0):
                             # Cutoff active, or optimal with positive objective => sound against adv_label
@@ -354,9 +354,9 @@ class Analyzer:
                             model_partial_milp.setObjective(obj, GRB.MINIMIZE)
                             model_partial_milp.optimize(milp_callback)
                             try:
-                                print(f"Partial MILP model status: {model_partial_milp.Status}, Objbound against label {adv_label}: {model_partial_milp.ObjBound:.4f}, Final solve time: {model_partial_milp.Runtime:.3f}")
+                                print(f"Partial MILP model status: {model_partial_milp.Status}, Obj val/bound for constraint {is_greater_tuple}: {model_partial_milp.objval:.4f}/{model_partial_milp.objbound:.4f}, Final solve time: {model_partial_milp.Runtime:.3f}")
                             except:
-                                print(f"Partial MILP model status: {model_partial_milp.Status}, Objbound retrival failed, Final solve time: {model_partial_milp.Runtime:.3f}")
+                                print(f"Partial MILP model status: {model_partial_milp.Status}, Obj val/bound retrival failed for constraint {is_greater_tuple}, Final solve time: {model_partial_milp.Runtime:.3f}")
 
                             if model_partial_milp.Status in [2, 6, 9, 11] and model_partial_milp.ObjBound > 0:
                                 or_result = True
@@ -364,6 +364,7 @@ class Analyzer:
                             elif model_partial_milp.Status not in [2, 6, 9, 11]:
                                 print("Partial milp model was not successful status is", model_partial_milp.Status)
                                 model_partial_milp.write("final.mps")
+                                assert model_partial_milp.Status not in [3,4], "Infeasible partial MILP model encountered"
                             elif model_partial_milp.SolCount>0:
                                 adex_list_or.append(model_partial_milp.x[0:len(self.nn.specLB)])
                             else:
@@ -371,6 +372,7 @@ class Analyzer:
                         elif model.Status not in [2, 6, 9, 11]:
                             print("Model was not successful status is", model.Status)
                             model.write("final.mps")
+                            assert model.Status not in [3, 4], "Infeasible model encountered"
                             pass
                         elif model.SolCount>0:
                             adex_list_or.append(model.x[0:len(self.nn.specLB)])
@@ -482,6 +484,9 @@ class Analyzer:
         #             dominant_class = label
         #             break
         # else:
+
+        label_failed = label_failed if len(label_failed) > 0 else None
+        adex_list = adex_list if len(adex_list) > 0 else None
 
         elina_abstract0_free(self.man, element)
         return dominant_class, nlb, nub, label_failed, adex_list
