@@ -264,28 +264,34 @@ class Analyzer:
         constraint_dict = {}
 
         if self.output_constraints is None:
-            if self.label == -1:
-                # Check all labels if non provided
-                candidate_labels = list(range(output_size))
-            else:
-                candidate_labels = [self.label]
-
-            if self.prop == -1:
-                # Check against all labels if non provided
-                adv_labels = list(range(output_size))
-            else:
-                adv_labels = [self.prop]
-
-            for label in candidate_labels:
-                # Translate label checks in constraints
+            if config.regression:
+                raise NotImplementedError
                 constraints = []
-                for adv_label in adv_labels:
-                    if label == adv_label:
-                        continue
-                    if nlb[-1][label] > nub[-1][adv_label]:
-                        continue
-                    constraints.append([(label, adv_label, 0)])
-                constraint_dict[label] = constraints
+                constraints.append([(0, -1, true_label - config.epsilon_y)])
+                constraints.append([(-1, 0, true_label + config.epsilon_y)])
+            else:
+                if self.label == -1:
+                    # Check all labels if non provided
+                    candidate_labels = list(range(output_size))
+                else:
+                    candidate_labels = [self.label]
+
+                if self.prop == -1:
+                    # Check against all labels if non provided
+                    adv_labels = list(range(output_size))
+                else:
+                    adv_labels = [self.prop]
+
+                for label in candidate_labels:
+                    # Translate label checks in constraints
+                    constraints = []
+                    for adv_label in adv_labels:
+                        if label == adv_label:
+                            continue
+                        if nlb[-1][label] > nub[-1][adv_label]:
+                            continue
+                        constraints.append([(label, adv_label, 0)])
+                    constraint_dict[label] = constraints
         else:
             constraint_dict[True] = self.output_constraints
 
@@ -324,14 +330,14 @@ class Analyzer:
                     and_result = False
                     failed_constraints.append(or_list)
             if self.domain == 'refinepoly' and not and_result:
-                and_result, label_failed_and, adex_list_and = evaluate_models(model, var_list, counter,
+                and_result, failed_constraints, adex_list_and = evaluate_models(model, var_list, counter,
                                                                               len(self.nn.specLB), failed_constraints,
                                                                               terminate_on_failure, model_partial_milp,
                                                                               var_list_partial_milp,
                                                                               counter_partial_milp)
 
                 if len(constraint_dict.keys()) == 1:
-                    label_failed += label_failed_and
+                    label_failed += [x[0][1] for x in failed_constraints]
                     adex_list += adex_list_and
             elif len(constraint_dict.keys()) == 1 and len(failed_constraints)>0 and all([len(x)==1 for x in failed_constraints]):
                 # Do not return failed labels when testing for multiple "true" labels
@@ -342,8 +348,8 @@ class Analyzer:
                 dominant_class = constrain_key
                 break
 
-        label_failed = label_failed if len(label_failed) > 0 else None
+        failed_constraints = failed_constraints if len(failed_constraints) > 0 else None
         adex_list = adex_list if len(adex_list) > 0 else None
 
         elina_abstract0_free(self.man, element)
-        return dominant_class, nlb, nub, label_failed, adex_list
+        return dominant_class, nlb, nub, failed_constraints, adex_list

@@ -1254,7 +1254,7 @@ elif config.spatial:
                 torch.zeros(2 * num_flows).long()
             ]).tolist()
 
-        perturbed_label, _, nlb, nub, failed_labels, _ = eran.analyze_box(
+        perturbed_label, _, nlb, nub, failed_constraints, _ = eran.analyze_box(
             specLB=specLB.cpu(), specUB=specUB.cpu(), domain=domain,
             timeout_lp=config.timeout_lp, timeout_milp=config.timeout_milp,
             use_default_heuristic=config.use_default_heuristic,
@@ -1265,7 +1265,7 @@ elif config.spatial:
         )
         end = time.time()
 
-        print(f'nlb {nlb[-1]} nub {nub[-1]} adv labels {failed_labels}')
+        print(f'nlb {nlb[-1]} nub {nub[-1]} adv labels {failed_constraints}')
 
         if perturbed_label == label:
             print(f'img {idx} verified {label}')
@@ -1278,12 +1278,9 @@ elif config.spatial:
             print(end - start, "seconds")
             continue
 
-        verified_flag, adv_image, _ = verify_network_with_milp(
-            nn=nn, LB_N0=LB_N0, UB_N0=UB_N0, nlb=nlb, nub=nub,
-            constraints=get_constraints_for_dominant_label(
-                predicted_label, failed_labels=failed_labels
-            ), spatial_constraints=milp_spatial_constraints
-        )
+        verified_flag, adv_image, _ = verify_network_with_milp(nn=nn, LB_N0=LB_N0, UB_N0=UB_N0, nlb=nlb, nub=nub,
+                                                               constraints=failed_constraints,
+                                                               spatial_constraints=milp_spatial_constraints)
 
         if verified_flag:
             print(f'img {idx} Verified as Safe {label}')
@@ -1377,7 +1374,7 @@ else:
                     nn.specLB = specLB
                     nn.specUB = specUB
 
-                    perturbed_label, nn, nlb, nub, failed_labels, x = refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, label,
+                    perturbed_label, nn, nlb, nub, failed_constraints, x = refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, label,
                                                             adv_labels=prop, K=config.k, s=config.s,
                                                             complete=config.complete,
                                                             timeout_final_lp=config.timeout_final_lp,
@@ -1391,7 +1388,7 @@ else:
             else:
                 if domain.endswith("poly"):
                     # First do a cheap pass without PRIMA
-                    perturbed_label, _, nlb, nub, failed_labels, x = eran.analyze_box(specLB, specUB, "deeppoly",
+                    perturbed_label, nn, nlb, nub, failed_constraints, x = eran.analyze_box(specLB, specUB, "deeppoly",
                                                                                       config.timeout_lp,
                                                                                       config.timeout_milp,
                                                                                       config.use_default_heuristic,
@@ -1405,10 +1402,10 @@ else:
                                                                                       max_milp_neurons=0,
                                                                                       approx_k=0)
                     if config.debug:
-                        print("nlb ", nlb[-1], " nub ", nub[-1],"adv labels ", failed_labels)
-                if perturbed_label != label and (not domain.endswith("poly") or "refine" in domain):
+                        print("nlb ", nlb[-1], " nub ", nub[-1],"adv labels ", failed_constraints)
+                if (perturbed_label != label) and (not domain.endswith("poly") or "refine" in domain):
                     # Do a second more precise run, for refinepoly
-                    perturbed_label, _, nlb, nub, failed_labels, x = eran.analyze_box(specLB, specUB, domain,
+                    perturbed_label, _, nlb, nub, failed_constraints, x = eran.analyze_box(specLB, specUB, domain,
                                                                                       config.timeout_lp,
                                                                                       config.timeout_milp,
                                                                                       config.use_default_heuristic,
@@ -1423,18 +1420,16 @@ else:
                                                                                       max_milp_neurons=config.max_milp_neurons,
                                                                                       approx_k=config.approx_k)
                     if config.debug:
-                        print("nlb ", nlb[-1], " nub ", nub[-1], "adv labels ", failed_labels)
+                        print("nlb ", nlb[-1], " nub ", nub[-1], "adv labels ", failed_constraints)
             if perturbed_label == label:
                 is_verified = True
                 print("img", i, "Verified", label)
                 verified_images += 1
             else:
-                if complete and (failed_labels is not None):
-                    failed_labels = list(set(failed_labels))
-                    constraints = get_constraints_for_dominant_label(label, failed_labels)
-                    is_verified, adv_image, adv_val = verify_network_with_milp(nn, specLB, specUB, nlb, nub, constraints)
+                if complete and (failed_constraints is not None):
+                    is_verified, adv_image, adv_val = verify_network_with_milp(nn, specLB, specUB, nlb, nub, failed_constraints)
                     if is_verified:
-                        print("img", i, "Verified", label, "using MILP against", failed_labels)
+                        print("img", i, "Verified", label, "using MILP against", failed_constraints)
                         verified_images += 1
                     else:
                         if adv_image != None:

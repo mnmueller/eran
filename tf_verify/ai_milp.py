@@ -907,6 +907,7 @@ def evaluate_models(model_lp, var_list_lp, counter_lp, input_len, contraints, te
     adex_list = []
     label_failed = []
     and_result = True
+    updated_constraint = []
     for or_list in contraints:
         # OR
         or_result = False
@@ -956,11 +957,12 @@ def evaluate_models(model_lp, var_list_lp, counter_lp, input_len, contraints, te
         if not or_result:
             and_result = False
             label_failed.append(is_greater_tuple[1])
+            updated_constraint.append(or_list)
             adex_list += adex_list_or
             if terminate_on_failure:
                 break
 
-    return and_result, label_failed, adex_list
+    return and_result, updated_constraint, adex_list
 
 
 def obj_from_is_greater_tuple(is_greater_tuple, var_list, counter):

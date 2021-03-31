@@ -19,7 +19,9 @@ def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label,
     relu_groups = []
     nlb = []
     nub = []
-    if constraints is None: constraints = []
+    if constraints is None:
+        constraints = []
+
     #print("INPUT SIZE ", network._lib.getOutputSize(network._nn, 0))
     layerno = 2
     new_relu_layers = []
@@ -183,30 +185,33 @@ def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label,
     x = None
 
     if len(constraints) == 0 or adv_labels != -1:
-        num_outputs = len(nn.weights[-1])
+        if config.regression:
+            constraints.append([(0, -1, true_label - config.epsilon_y)])
+            constraints.append([(-1, 0, true_label + config.epsilon_y)])
+        else:
+            num_outputs = len(nn.weights[-1])
+            # Matrix that computes the difference with the expected layer.
+            diffMatrix = np.delete(-np.eye(num_outputs), true_label, 0)
+            diffMatrix[:, true_label] = 1
+            diffMatrix = diffMatrix.astype(np.float64)
 
-        # Matrix that computes the difference with the expected layer.
-        diffMatrix = np.delete(-np.eye(num_outputs), true_label, 0)
-        diffMatrix[:, true_label] = 1
-        diffMatrix = diffMatrix.astype(np.float64)
+            # gets the values from GPUPoly.
+            res = network.evalAffineExpr(diffMatrix, back_substitute=network.BACKSUBSTITUTION_WHILE_CONTAINS_ZERO)
 
-        # gets the values from GPUPoly.
-        res = network.evalAffineExpr(diffMatrix, back_substitute=network.BACKSUBSTITUTION_WHILE_CONTAINS_ZERO)
+            var = 0
+            for label in range(num_outputs):
+                if label != true_label:
+                    if res[var][0] < 0:
+                        # add constraints that could not be proven using standard gpupoly for evaluation with
+                        constraints.append([(true_label, label, 0)])
+                    var = var + 1
 
-        var = 0
-        for label in range(num_outputs):
-            if label != true_label:
-                if res[var][0] < 0:
-                    # add constraints that could not be proven using standard gpupoly for evaluation with
-                    constraints.append([(true_label, label, 0)])
-                var = var + 1
-
-    constraints_hold, failed_labels, adex_list = evaluate_models(model, var_list, counter, len(nn.specLB), constraints,
+    constraints_hold, failed_constraints, adex_list = evaluate_models(model, var_list, counter, len(nn.specLB), constraints,
                                                                  terminate_on_failure, model_partial_milp,
                                                                  var_list_partial_milp, counter_partial_milp)
     dominant_class = true_label if constraints_hold else -1
 
-    failed_labels = failed_labels if len(failed_labels) > 0 else None
+    failed_constraints = failed_constraints if len(failed_constraints) > 0 else None
     adex_list = adex_list if len(adex_list) > 0 else None
 
-    return dominant_class, nn, nlb, nub, failed_labels, adex_list
+    return dominant_class, nn, nlb, nub, failed_constraints, adex_list
