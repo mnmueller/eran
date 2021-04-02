@@ -1465,6 +1465,6 @@ else:
               f"correct:  {correctly_classified_images}/{1 + i - config.from_test}, "
               f"verified: {verified_images}/{correctly_classified_images-unsafe_images}, "
               f"unsafe: {unsafe_images}/{correctly_classified_images-verified_images}, ",
-              f"time: {end - start:.3f}; {0 if cum_time==0 else cum_time / correctly_classified_images:.3f}; {cum_time:.3f}")
+              f"time: {end - start:.3f}; {0 if correctly_classified_images==0 else cum_time / correctly_classified_images:.3f}; {cum_time:.3f}")
 
     print('analysis precision ', verified_images, '/ ', correctly_classified_images)
