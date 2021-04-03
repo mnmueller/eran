@@ -32,6 +32,7 @@ from tqdm import tqdm
 from ai_milp import verify_network_with_milp
 import argparse
 from config import config
+import PIL
 from constraint_utils import get_constraints_for_dominant_label
 import re
 import itertools
@@ -161,7 +162,7 @@ def dave_data_loadeer():
     is_nchw = True
 
     img_dir = "/home/mark/Projects/DAVE_SD/data/Ch2_002_out/"
-    test_HMB = [3]
+    test_HMB = [4]
     for HMB_set in range(1, 7):
         timestamps_i = []
         angle_i = []
@@ -184,16 +185,16 @@ def dave_data_loadeer():
         angle_test.append(np.array(angle[HMB_set]))
     angle_test = np.concatenate(angle_test)
 
-    dave_ds = DAVE_dataset(timestamps_test, "../data/test", angle_test, mean=None, std=None, limit_sample=None)
+    dave_ds = DAVE_dataset(timestamps_test, "/home/mark/Projects/DAVE_SD/data/all", angle_test, mean=None, std=None, limit_sample=None)
     sampler = torch.utils.data.SequentialSampler(dave_ds)
-    dave_dl = torch.utils.data.DataLoader(dave_ds, batch_size=1, shuffle=True, num_workers=0, pin_memory=True, drop_last=False, sampler=sampler)
+    dave_dl = torch.utils.data.DataLoader(dave_ds, batch_size=1, num_workers=0, pin_memory=True, drop_last=False, sampler=sampler)
     return dave_dl, mean, std, is_nchw, input_shape
 
 
 def get_data_loader():
-    return mnist_data_loader()
+    # return mnist_data_loader()
     # return cifar10_data_loader()
-    # return dave_data_loadeer
+    return dave_data_loadeer()
 #    return data_loader_test, mean, std, is_nchw, input_shape
 
 
@@ -212,6 +213,7 @@ def get_args():
     parser.add_argument('--epsilon_y', type=float, default=config.epsilon, help='maximum delta for regression tasks')
     parser.add_argument('--domain', type=str, default=config.domain, help='the domain name can be either deepzono, refinezono, deeppoly, refinepoly, gpupoly, refinegpupoly')
     parser.add_argument('--complete', type=str2bool, default=config.complete,  help='flag specifying where to use complete verification or not')
+    parser.add_argument("--regression", type=str2bool, default=config.regression, help="Whether to verify a regression or classification task")
 
     parser.add_argument('--timeout_lp', type=float, default=config.timeout_lp,  help='timeout for the LP solver')
     parser.add_argument('--timeout_final_lp', type=float, default=config.timeout_final_lp,  help='timeout for the final LP solver')
@@ -261,7 +263,7 @@ def evaluate_net(x, domain, network=None, eran=None):
         label, _, net_out, _, _, _ = eran.analyze_box(x, x, 'deepzono', config.timeout_lp,
                                                           config.timeout_milp,
                                                           config.use_default_heuristic,
-                                                          approx_k=config.approx_k)
+                                                          approx_k=config.approx_k, label=0 if config.regression else -1)
         net_out = net_out[-1]
     return label, net_out
 
@@ -302,15 +304,15 @@ def run():
         if config.num_tests is not None and i >= config.from_test + config.num_tests:
             break
 
-        image= np.float64(x)
+        image = np.float64(x).reshape(input_shape)
         image_normalized = normalize(image, mean, std, is_nchw, input_shape).reshape(-1)
 
         start = time.time()
 
-        label, net_out =evaluate_net(image_normalized, domain, network if "gpu" in domain else None, eran if "gpu" not in domain else None)
+        label, net_out = evaluate_net(image_normalized, domain, network if "gpu" in domain else None, eran if "gpu" not in domain else None)
 
         if config.regression:
-            is_correctly_classified = (abs(y-net_out) < epsilon_y)
+            is_correctly_classified = (abs(y-net_out[0]) < epsilon_y)
             label = float(y)
         else:
             is_correctly_classified = (label == y)
@@ -340,9 +342,7 @@ def run():
                 else:
                     is_verified = network.test(specLB, specUB, label)
                 #print("res ", res)
-                if is_verified:
-                    perturbed_label = label
-                elif domain == 'refinegpupoly':
+                if not is_verified and domain == 'refinegpupoly':
                     nn.specLB = specLB
                     nn.specUB = specUB
 
@@ -357,6 +357,10 @@ def run():
                                                             partial_milp=config.partial_milp,
                                                             max_milp_neurons=config.max_milp_neurons,
                                                             approx=config.approx_k)
+                    if config.regression:
+                        is_verified = is_verified or (abs(label - nlb[-1][0]) < epsilon_y and abs(nub[-1][0]-label)<epsilon_y)
+                    else:
+                        is_verified = is_verified or (perturbed_label == label)
             else:
                 if domain.endswith("poly"):
                     # First do a cheap pass without PRIMA
@@ -375,7 +379,11 @@ def run():
                                                                                       approx_k=0)
                     if config.debug:
                         print("nlb ", nlb[-1], " nub ", nub[-1], "adv labels ", failed_constraints)
-                if (perturbed_label != label) and (not domain.endswith("poly") or "refine" in domain):
+                    if config.regression:
+                        is_verified = is_verified or (abs(label - nlb[-1][0]) < epsilon_y and abs(nub[-1][0]-label)<epsilon_y)
+                    else:
+                        is_verified = is_verified or (perturbed_label == label)
+                if (not is_verified) and (not domain.endswith("poly") or "refine" in domain):
                     # Do a second more precise run, for refinepoly
                     perturbed_label, nn, nlb, nub, failed_constraints, x = eran.analyze_box(specLB, specUB, domain,
                                                                                       config.timeout_lp,
@@ -392,12 +400,10 @@ def run():
                                                                                       max_milp_neurons=config.max_milp_neurons,
                                                                                       approx_k=config.approx_k)
 
-            if config.regression:
-                if perturbed_label == abs(label - perturbed_label) < epsilon_y:
-                    is_verified = True
-            else:
-                if perturbed_label == label:
-                    is_verified = True
+                    if config.regression:
+                        is_verified = is_verified or (abs(label - nlb[-1][0]) < epsilon_y and abs(nub[-1][0]-label)<epsilon_y)
+                    else:
+                        is_verified = is_verified or (perturbed_label == label)
             if is_verified:
                 print("img", i, "Verified", label)
                 verified_images += 1
@@ -407,12 +413,12 @@ def run():
                     for x_i in x:
                         cex_label, cex_out = evaluate_net(x_i, domain, network if "gpu" in domain else None, eran if "gpu" not in domain else None)
                         if config.regression:
-                            adex_found = abs(y - cex_out) > epsilon_y
+                            adex_found = abs(y - cex_out[0]) > epsilon_y
                         else:
                             adex_found = cex_label != label
                         if adex_found:
                             if config.regression:
-                                print(f"img {i} Failed, with adversarial example with output {cex_out}. Correct output is {label}")
+                                print(f"img {i} Failed, with adversarial example with output {cex_out[0]}. Correct output is {label}")
                             else:
                                 print(f"img {i} Failed, with adversarial example with label {cex_label}. Correct label is {label}")
                             denormalize(np.array(x_i), mean, std, is_nchw, input_shape)
@@ -428,12 +434,12 @@ def run():
                         else:
                             cex_label, cex_out = evaluate_net(x, domain, network if "gpu" in domain else None, eran if "gpu" not in domain else None)
                             if config.regression:
-                                adex_found = abs(y - cex_out) > epsilon_y
+                                adex_found = abs(y - cex_out[0]) > epsilon_y
                             else:
                                 adex_found = cex_label != label
                             if adex_found:
                                 if config.regression:
-                                    print(f"img {i} Failed, with adversarial example with output {cex_out}. Correct output is {label}")
+                                    print(f"img {i} Failed, with adversarial example with output {cex_out[0]}. Correct output is {label}")
                                 else:
                                     print(f"img {i} Failed, with adversarial example with label {cex_label}. Correct label is {label}")
                                 denormalize(np.array(x), mean, std, is_nchw, input_shape)
@@ -453,7 +459,7 @@ def run():
               f"correct:  {correctly_classified_images}/{1 + i - config.from_test}, "
               f"verified: {verified_images}/{correctly_classified_images}, "
               f"unsafe: {unsafe_images}/{correctly_classified_images}, ",
-              f"time: {end - start:.3f}; {0 if cum_time==0 else cum_time / correctly_classified_images:.3f}; {cum_time:.3f}")
+              f"time: {end - start:.3f}; {0 if correctly_classified_images==0 else cum_time / correctly_classified_images:.3f}; {cum_time:.3f}")
 
 
 

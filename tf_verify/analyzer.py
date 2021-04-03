@@ -265,10 +265,13 @@ class Analyzer:
 
         if self.output_constraints is None:
             if config.regression:
-                raise NotImplementedError
                 constraints = []
-                constraints.append([(0, -1, true_label - config.epsilon_y)])
-                constraints.append([(-1, 0, true_label + config.epsilon_y)])
+                if self.label == -1:
+                    assert False, "For a regression taks a target needs to be provided for certificaiton"
+                else:
+                    constraints.append([(0, -1, self.label - config.epsilon_y)])
+                    constraints.append([(-1, 0, self.label + config.epsilon_y)])
+                    constraint_dict[self.label] = constraints
             else:
                 if self.label == -1:
                     # Check all labels if non provided
