@@ -333,7 +333,7 @@ class Analyzer:
                     and_result = False
                     failed_constraints.append(or_list)
             if self.domain == 'refinepoly' and not and_result:
-                and_result, failed_constraints, adex_list_and = evaluate_models(model, var_list, counter,
+                and_result, failed_constraints, adex_list_and, model_bounds = evaluate_models(model, var_list, counter,
                                                                               len(self.nn.specLB), failed_constraints,
                                                                               terminate_on_failure, model_partial_milp,
                                                                               var_list_partial_milp,

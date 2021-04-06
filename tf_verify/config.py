@@ -52,6 +52,7 @@ class config:
     vnn_lib_spec = None # Use inputs and constraints defined in a file respecting the vnn_lib standard
     regression = False
     epsilon_y = None
+    max_gpu_batch = 500
 
     # refine options
     use_milp = True # Whether to use MILP

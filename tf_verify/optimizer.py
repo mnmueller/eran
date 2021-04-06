@@ -455,6 +455,7 @@ class Optimizer:
         num_gpu_layers = 1
         relu_layers = []
         last_layer = None
+        omitted_layers = []
         while i < nbr_op:
             #TODO support Maxpool
             if self.operations[i] == "MatMul":
@@ -573,9 +574,24 @@ class Optimizer:
                 relu_layers.append(num_gpu_layers)
                 num_gpu_layers +=1
                 i += 1
+            elif self.operations[i] == "Tanh":
+                if (i + 1) < nbr_op:
+                    raise NotImplementedError
+                else:
+                    print("Final Tanh layer omitted")
+                    omitted_layers.append(self.operations[i])
+                i += 1
+            elif self.operations[i] == "Sigmoid":
+                if (i + 1) < nbr_op:
+                    raise NotImplementedError
+                else:
+                    print("Final Sigmoid layer omitted")
+                    omitted_layers.append(self.operations[i])
+                i += 1
             else:
                 assert 0, "the optimizer for" + "gpupoly" + " doesn't know of the operation type " + self.operations[i]
-        return network, relu_layers, num_gpu_layers
+        omitted_layers = None if len(omitted_layers) == 0 else omitted_layers
+        return network, relu_layers, num_gpu_layers, omitted_layers
         
 
     def set_predecessors(self, nn, output):

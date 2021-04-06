@@ -477,7 +477,7 @@ else:
         operations, resources = translator.translate()
         optimizer = Optimizer(operations, resources)
         nn = layers()
-        network, relu_layers, num_gpu_layers = optimizer.get_gpupoly(nn) 
+        network, relu_layers, num_gpu_layers, _ = optimizer.get_gpupoly(nn)
     else:    
         eran = ERAN(model, is_onnx=is_onnx)
 
@@ -1374,7 +1374,7 @@ else:
                     nn.specLB = specLB
                     nn.specUB = specUB
 
-                    perturbed_label, nn, nlb, nub, failed_constraints, x = refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, label,
+                    perturbed_label, nn, nlb, nub, failed_constraints, x = refine_gpupoly_results(nn, network, config, relu_layers, label,
                                                             adv_labels=prop, K=config.k, s=config.s,
                                                             complete=config.complete,
                                                             timeout_final_lp=config.timeout_final_lp,

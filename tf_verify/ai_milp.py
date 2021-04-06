@@ -908,6 +908,7 @@ def evaluate_models(model_lp, var_list_lp, counter_lp, input_len, contraints, te
     label_failed = []
     and_result = True
     updated_constraint = []
+    model_bounds = {}
     for or_list in contraints:
         # OR
         or_result = False
@@ -920,6 +921,8 @@ def evaluate_models(model_lp, var_list_lp, counter_lp, input_len, contraints, te
             obj_bound = f"{model_lp.objbound:.4f}" if hasattr(model_lp,"objbound") else "failed"
             obj_val = f"{model_lp.objval:.4f}" if hasattr(model_lp, "objval") else "failed"
             print(f"Model status: {model_lp.Status}, Obj val/bound for constraint {is_greater_tuple}: {obj_val}/{obj_bound}, Final solve time: {model_lp.Runtime:.3f}")
+
+            model_bounds[is_greater_tuple] = (float(model_lp.objbound) if hasattr(model_lp,"objbound") else None)
 
             if model_lp.Status == 6 or (model_lp.Status in [2, 9, 11] and model_lp.objval > 0):
                 # Cutoff active, or optimal with positive objective => sound against adv_label
@@ -962,7 +965,7 @@ def evaluate_models(model_lp, var_list_lp, counter_lp, input_len, contraints, te
             if terminate_on_failure:
                 break
 
-    return and_result, updated_constraint, adex_list
+    return and_result, updated_constraint, adex_list, model_bounds
 
 
 def obj_from_is_greater_tuple(is_greater_tuple, var_list, counter):

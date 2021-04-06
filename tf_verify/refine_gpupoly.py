@@ -5,10 +5,10 @@ import time
 from ai_milp import evaluate_models
 
 
-def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label, adv_labels=-1, K=3, s=-2,
+def refine_gpupoly_results(nn, network, config, relu_layers, true_label, adv_labels=-1, K=3, s=-2,
                            timeout_lp=10, timeout_milp=10, timeout_final_lp=100, timeout_final_milp=100, use_milp=False,
                            partial_milp=False, max_milp_neurons=30, complete=False, approx=True, constraints=None,
-                           terminate_on_failure = True):
+                           terminate_on_failure=True, max_eqn_per_call=500):
     nn.predecessors = []
     for pred in range(0, nn.numlayer + 1):
         predecessor = np.zeros(1, dtype=np.int)
@@ -117,7 +117,6 @@ def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label,
                
                 i = i + 1
         bounds=np.zeros(shape=(0, 2))
-        max_eqn_per_call = 500
         for i_a in range((int)(np.ceil(A.shape[0] / max_eqn_per_call))):
             A_temp = A[i_a*max_eqn_per_call:(i_a+1)*max_eqn_per_call]
             bounds_temp = network.evalAffineExpr(A_temp, layer=gpu_layer, back_substitute=network.FULL_BACKSUBSTITUTION, dtype=np.double)
@@ -156,7 +155,8 @@ def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label,
                                                 use_milp=False, is_nchw=True)
         model.setParam(GRB.Param.TimeLimit, timeout_final_lp)
 
-    model.setParam(GRB.Param.Cutoff, 0.01)
+    if not (config.regression and config.epsilon_y == 0):
+        model.setParam(GRB.Param.Cutoff, 0.01)
 
     if partial_milp != 0 and not complete:
         nn.ffn_counter = 0
@@ -172,7 +172,8 @@ def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label,
                                                                                        partial_milp=partial_milp,
                                                                                        max_milp_neurons=max_milp_neurons)
         model_partial_milp.setParam(GRB.Param.TimeLimit, timeout_final_milp)
-        model_partial_milp.setParam(GRB.Param.Cutoff, 0.01)
+        if not (config.regression and config.epsilon_y == 0):
+            model_partial_milp.setParam(GRB.Param.Cutoff, 0.01)
     else:
         model_partial_milp = None
         var_list_partial_milp = None
@@ -206,7 +207,7 @@ def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label,
                         constraints.append([(true_label, label, 0)])
                     var = var + 1
 
-    constraints_hold, failed_constraints, adex_list = evaluate_models(model, var_list, counter, len(nn.specLB), constraints,
+    constraints_hold, failed_constraints, adex_list, model_bounds = evaluate_models(model, var_list, counter, len(nn.specLB), constraints,
                                                                  terminate_on_failure, model_partial_milp,
                                                                  var_list_partial_milp, counter_partial_milp)
     dominant_class = true_label if constraints_hold else -1
@@ -214,4 +215,4 @@ def refine_gpupoly_results(nn, network, num_gpu_layers, relu_layers, true_label,
     failed_constraints = failed_constraints if len(failed_constraints) > 0 else None
     adex_list = adex_list if len(adex_list) > 0 else None
 
-    return dominant_class, nn, nlb, nub, failed_constraints, adex_list
+    return dominant_class, nn, nlb, nub, failed_constraints, adex_list, model_bounds
