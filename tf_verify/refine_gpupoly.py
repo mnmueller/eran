@@ -168,7 +168,7 @@ def refine_gpupoly_results(nn, network, config, relu_layers, true_label, adv_lab
         nn.activation_counter = 0
         counter_partial_milp, var_list_partial_milp, model_partial_milp = create_model(nn, nn.specLB, nn.specUB, nlb,
                                                                                        nub, relu_groups, nn.numlayer,
-                                                                                       complete, is_nchw=True,
+                                                                                       False, is_nchw=True,
                                                                                        partial_milp=partial_milp,
                                                                                        max_milp_neurons=max_milp_neurons)
         model_partial_milp.setParam(GRB.Param.TimeLimit, timeout_final_milp)

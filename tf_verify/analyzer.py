@@ -246,7 +246,7 @@ class Analyzer:
                                                                                                self.nn.specUB, nlb, nub,
                                                                                                self.relu_groups,
                                                                                                self.nn.numlayer,
-                                                                                               use_milp=True,
+                                                                                               use_milp=False,
                                                                                                partial_milp=self.partial_milp,
                                                                                                max_milp_neurons=self.max_milp_neurons)
                 model_partial_milp.setParam(GRB.Param.TimeLimit, self.timeout_final_milp)

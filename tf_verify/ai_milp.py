@@ -381,7 +381,7 @@ def handle_relu(model,var_list, affine_counter, num_neurons, lbi, ubi, relu_grou
     width = np.array(ubi) - np.array(lbi)
     cross_over_idx = sorted(cross_over_idx, key= lambda x: -width[x])
 
-    milp_encode_idx = cross_over_idx if use_milp else cross_over_idx[:partial_milp_neurons]
+    milp_encode_idx = cross_over_idx[:partial_milp_neurons]#cross_over_idx if use_milp else cross_over_idx[:partial_milp_neurons]
     temp_idx = np.ones(num_neurons, dtype=bool)
     temp_idx[milp_encode_idx] = False
     relax_encode_idx = np.arange(num_neurons)[temp_idx]
@@ -420,10 +420,10 @@ def handle_relu(model,var_list, affine_counter, num_neurons, lbi, ubi, relu_grou
                model.addConstr(expr, GRB.LESS_EQUAL, -lbi[j])
 
                # y >= x
-               expr = var_list[relu_counter+j] -  var_list[affine_counter+j]
+               expr = var_list[relu_counter+j] - var_list[affine_counter+j]
                model.addConstr(expr, GRB.GREATER_EQUAL, 0)
 
-               # y <= u.a
+               # y <= u . a
                expr = var_list[relu_counter+j] - ubi[j] * var_bin
                model.addConstr(expr, GRB.LESS_EQUAL, 0)
 
@@ -442,8 +442,16 @@ def handle_relu(model,var_list, affine_counter, num_neurons, lbi, ubi, relu_grou
             elif lbi[j] >= 0:
                 expr = var_list[relu_counter+j] - var_list[affine_counter+j]
                 model.addConstr(expr, GRB.EQUAL, 0)
+
     if len(relu_groupsi) > 0:
         _add_kactivation_constraints(model, var_list, relu_groupsi, affine_counter, relu_counter)
+    else:
+        for j in relax_encode_idx:
+            if (lbi[j] < 0) and (ubi[j] > 0):
+                expr = -ubi[j] * var_list[affine_counter+j]
+                expr += (ubi[j] - lbi[j]) * var_list[relu_counter+j]
+                expr += lbi[j] * ubi[j]
+                model.addConstr(expr, GRB.LESS_EQUAL, 0)
 
     return relu_counter
 
@@ -519,7 +527,7 @@ def create_model(nn, LB_N0, UB_N0, nlb, nub, relu_groups, numlayer, use_milp, is
     model = Model("milp")
 
     model.setParam("OutputFlag",0)
-    model.setParam(GRB.Param.FeasibilityTol, 1e-5)
+    model.setParam(GRB.Param.FeasibilityTol, 2e-5)
 
     milp_activation_layers = np.nonzero([l in ["ReLU", "Maxpool"] for l in nn.layertypes])[0]
 
@@ -552,7 +560,7 @@ def create_model(nn, LB_N0, UB_N0, nlb, nub, relu_groups, numlayer, use_milp, is
         num_error_terms = nn.zonotope.shape[1]
         for j in range(num_error_terms-1):
             var_name = "x" + str(j)
-            var = model.addVar(vtype=GRB.CONTINUOUS, lb = -1, ub=1, name=var_name)
+            var = model.addVar(vtype=GRB.CONTINUOUS, lb=-1, ub=1, name=var_name)
             var_list.append(var)
         counter = num_error_terms-1
         for i in range(num_pixels):
@@ -562,7 +570,7 @@ def create_model(nn, LB_N0, UB_N0, nlb, nub, relu_groups, numlayer, use_milp, is
                 lower_bound = lower_bound - abs(nn.zonotope[i][j])
                 upper_bound = upper_bound + abs(nn.zonotope[i][j])
             var_name = "x" + str(counter+i)
-            var = model.addVar(vtype=GRB.CONTINUOUS, lb = lower_bound, ub=upper_bound, name=var_name)
+            var = model.addVar(vtype=GRB.CONTINUOUS, lb=lower_bound, ub=upper_bound, name=var_name)
             var_list.append(var)
             expr = LinExpr()
             expr += -1 * var_list[counter + i]
@@ -603,7 +611,7 @@ def create_model(nn, LB_N0, UB_N0, nlb, nub, relu_groups, numlayer, use_milp, is
             if relu_groups is None:
                 counter = handle_relu(model, var_list, counter, len(nlb[i]), nlb[index-1], nub[index-1], [], use_milp, partial_milp_neurons)
             else:
-                counter = handle_relu(model,var_list, counter,len(nlb[i]),nlb[index-1],nub[index-1], relu_groups[nn.activation_counter], use_milp, partial_milp_neurons)
+                counter = handle_relu(model, var_list, counter, len(nlb[i]), nlb[index-1], nub[index-1], relu_groups[nn.activation_counter], use_milp, partial_milp_neurons)
             nn.activation_counter += 1
             start_counter.append(counter)
 
