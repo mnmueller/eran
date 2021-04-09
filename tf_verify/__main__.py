@@ -1374,7 +1374,7 @@ else:
                     nn.specLB = specLB
                     nn.specUB = specUB
 
-                    perturbed_label, nn, nlb, nub, failed_constraints, x = refine_gpupoly_results(nn, network, config, relu_layers, label,
+                    perturbed_label, nn, nlb, nub, failed_constraints, x, model_bounds = refine_gpupoly_results(nn, network, config, relu_layers, label,
                                                             adv_labels=prop, K=config.k, s=config.s,
                                                             complete=config.complete,
                                                             timeout_final_lp=config.timeout_final_lp,
