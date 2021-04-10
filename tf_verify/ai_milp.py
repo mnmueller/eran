@@ -922,6 +922,7 @@ def evaluate_models(model_lp, var_list_lp, counter_lp, input_len, contraints, te
         or_result = False
         adex_list_or = []
         for is_greater_tuple in or_list:
+            model_lp.reset()
             obj = obj_from_is_greater_tuple(is_greater_tuple, var_list_lp, counter_lp)
             model_lp.setObjective(obj, GRB.MINIMIZE)
 
@@ -937,6 +938,7 @@ def evaluate_models(model_lp, var_list_lp, counter_lp, input_len, contraints, te
                 or_result = True
                 break
             elif model_p_milp is not None:
+                model_p_milp.reset()
                 obj = obj_from_is_greater_tuple(is_greater_tuple, var_list_p_milp, counter_p_milp)
                 model_p_milp.setObjective(obj, GRB.MINIMIZE)
                 model_p_milp.optimize(milp_callback)

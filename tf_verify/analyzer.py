@@ -300,6 +300,7 @@ class Analyzer:
 
         label_failed = []
         adex_list = []
+        model_bounds = None
 
         for constrain_key in constraint_dict.keys():
             # AND
@@ -355,4 +356,4 @@ class Analyzer:
         adex_list = adex_list if len(adex_list) > 0 else None
 
         elina_abstract0_free(self.man, element)
-        return dominant_class, nlb, nub, failed_constraints, adex_list
+        return dominant_class, nlb, nub, failed_constraints, adex_list, model_bounds
