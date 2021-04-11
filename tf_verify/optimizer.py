@@ -43,7 +43,7 @@ class Optimizer:
             list of str, each one being a type of operation (like "MatMul", "Conv2D", "Add" ...)
         """
         self.operations = operations
-        self.resources  = resources
+        self.resources = resources
 
     def get_neuron_count(self):
         total_neurons = 0
@@ -517,7 +517,15 @@ class Optimizer:
                 num_gpu_layers +=2
                 last_layer = "FC"
                 i += 1
-            
+
+            elif self.operations[i] == "MaxPoool":
+                image_shape, kernel_shape, strides, pad_top, pad_left, pad_bottom, pad_right, m_input_names, b_output_name, b_output_shape = self.resources[i][domain]
+                padding = [pad_top, pad_left, pad_bottom, pad_right]
+                network.add_maxpool_2d(kernel_shape, image_shape[0], image_shape[1], image_shape[2], strides, padding)
+                nn.numlayer += 1
+                num_gpu_layers += 2
+                i += 1
+
             elif self.operations[i] == "Conv2D":
                 last_layer = "Conv"
                 if i < nbr_op-1 and self.operations[i+1] == "BiasAdd":
