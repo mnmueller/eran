@@ -52,7 +52,7 @@ class ERAN:
             translator = TFTranslator(model, session)
         operations, resources = translator.translate()
         self.input_shape = resources[0]["deeppoly"][2]
-        self.optimizer  = Optimizer(operations, resources)
+        self.optimizer = Optimizer(operations, resources)
         print('This network has ' + str(self.optimizer.get_neuron_count()) + ' neurons.')
     
     

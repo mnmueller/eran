@@ -368,7 +368,7 @@ def run():
     for i, (x, y) in enumerate(test_data_loader):
         if config.from_test and i < config.from_test:
             continue
-        if i%config.data_dillation != 0:
+        if i % config.data_dillation != 0:
             continue
         if config.num_tests is not None and i >= (config.from_test + config.num_tests*config.data_dillation):
             break
@@ -559,18 +559,18 @@ def run():
         end = time.time()
         cum_time += end - start  # only count samples where we did try to certify
 
-        dave_plot(image_normalized, i, mean, std, is_nchw, input_shape, y, y_nat, y_lb, y_ub, y_adv=None, show=True)
+        dave_plot(image_normalized, i, mean, std, is_nchw, input_shape, y, y_nat, y_lb, y_ub, y_adv=None, show=False)
 
         if config.regression and epsilon_y == 0:
             mse_nat_total.append(mse_nat)
             mse_cert_total.append(mse_cert)
-            print(f"progress: {1 + i/config.data_dillation - config.from_test}/{config.num_tests}, "
+            print(f"progress: {1 + i/config.data_dillation - config.from_test:.0f}/{config.num_tests}, "
                   f"nat MSE:  {np.median(mse_nat_total):.4e}/{np.mean(mse_nat_total):.4e}, "
                   f"cert MSE: {np.median(mse_cert_total):.4e}/{np.mean(mse_cert_total):.4e}, "
                   f"time: {end - start:.3f}; {0 if correctly_classified_images==0 else cum_time / correctly_classified_images:.3f}; {cum_time:.3f}")
 
         else:
-            print(f"progress: {1 + i/config.data_dillation - config.from_test}/{config.num_tests}, "
+            print(f"progress: {1 + i/config.data_dillation - config.from_test:d}/{config.num_tests}, "
                   f"correct:  {correctly_classified_images}/{1 + i/config.data_dillation - config.from_test}, "
                   f"verified: {verified_images}/{correctly_classified_images}, "
                   f"unsafe: {unsafe_images}/{correctly_classified_images}, ",
