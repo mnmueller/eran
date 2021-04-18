@@ -148,7 +148,7 @@ def refine_gpupoly_results(nn, network, config, relu_layers, true_label, adv_lab
     if complete:
         start_milp = time.time()
         counter, var_list, model = create_model(nn, nn.specLB, nn.specUB, nlb, nub, relu_groups, nn.numlayer,
-                                                use_milp=True, is_nchw=True, partial_milp=-1, max_milp_neurons=1e6)
+                                                use_milp=True, is_nchw=True, partial_milp=-1, max_milp_neurons=-1)
         #model.setParam(GRB.Param.TimeLimit, timeout_final_milp) #set later
     else:
         counter, var_list, model = create_model(nn, nn.specLB, nn.specUB, nlb, nub, relu_groups, nn.numlayer,
@@ -158,7 +158,7 @@ def refine_gpupoly_results(nn, network, config, relu_layers, true_label, adv_lab
     if not (config.regression and config.epsilon_y == 0):
         model.setParam(GRB.Param.Cutoff, 0.01)
 
-    if partial_milp != 0 and not complete:
+    if partial_milp != 0:
         nn.ffn_counter = 0
         nn.conv_counter = 0
         nn.pool_counter = 0

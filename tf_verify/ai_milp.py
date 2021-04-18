@@ -49,7 +49,7 @@ def lp_callback(model, where):
 
 
 def handle_conv(model, var_list, start_counter, filters,biases,filter_size,input_shape, strides, out_shape, pad_top,
-                pad_left, pad_bottom, pad_right, lbi, ubi, use_milp, is_nchw=False):
+                pad_left, pad_bottom, pad_right, lbi, ubi, is_nchw=False):
 
     num_out_neurons = np.prod(out_shape)
     num_in_neurons = np.prod(input_shape)#input_shape[0]*input_shape[1]*input_shape[2]
@@ -381,7 +381,7 @@ def handle_relu(model,var_list, affine_counter, num_neurons, lbi, ubi, relu_grou
     width = np.array(ubi) - np.array(lbi)
     cross_over_idx = sorted(cross_over_idx, key= lambda x: -width[x])
 
-    milp_encode_idx = cross_over_idx[:partial_milp_neurons]#cross_over_idx if use_milp else cross_over_idx[:partial_milp_neurons]
+    milp_encode_idx = cross_over_idx[:partial_milp_neurons] if partial_milp_neurons>=0 else cross_over_idx #cross_over_idx if use_milp else cross_over_idx[:partial_milp_neurons]
     temp_idx = np.ones(num_neurons, dtype=bool)
     temp_idx[milp_encode_idx] = False
     relax_encode_idx = np.arange(num_neurons)[temp_idx]
@@ -523,7 +523,7 @@ def handle_tanh_sigmoid(model, var_list, affine_counter, num_neurons, lbi, ubi,
     return y_counter
 
 
-def create_model(nn, LB_N0, UB_N0, nlb, nub, relu_groups, numlayer, use_milp, is_nchw=False, partial_milp=0, max_milp_neurons=30):
+def create_model(nn, LB_N0, UB_N0, nlb, nub, relu_groups, numlayer, use_milp, is_nchw=False, partial_milp=0, max_milp_neurons=-1):
     model = Model("milp")
 
     model.setParam("OutputFlag",0)
@@ -647,7 +647,7 @@ def create_model(nn, LB_N0, UB_N0, nlb, nub, relu_groups, numlayer, use_milp, is
             index = nn.predecessors[i+1][0]
             counter = start_counter[index]
             counter = handle_conv(model, var_list, counter, filters, biases, filter_size, input_shape, strides,
-                                  out_shape, padding[0], padding[1], padding[2], padding[3], nlb[i], nub[i], use_milp, is_nchw=is_nchw)
+                                  out_shape, padding[0], padding[1], padding[2], padding[3], nlb[i], nub[i], is_nchw=is_nchw)
             start_counter.append(counter)
 
             nn.conv_counter+=1
@@ -663,7 +663,7 @@ def create_model(nn, LB_N0, UB_N0, nlb, nub, relu_groups, numlayer, use_milp, is
             strides = nn.strides[nn.conv_counter + nn.pool_counter]
             index = nn.predecessors[i+1][0]
             counter = start_counter[index]
-            counter = handle_maxpool(model,var_list,i,counter,pool_size, input_shape, strides, out_shape, padding[0], padding[1], nlb[i],nub[i], nlb[i-1], nub[i-1],use_milp)
+            counter = handle_maxpool(model,var_list,i,counter,pool_size, input_shape, strides, out_shape, padding[0], padding[1], nlb[i],nub[i], nlb[i-1], nub[i-1], use_milp)
             start_counter.append(counter)
             nn.pool_counter+=1
 
@@ -747,7 +747,7 @@ def get_bounds_for_layer_with_milp(nn, LB_N0, UB_N0, layerno, abs_layer_count, o
     widths = [u-l for u, l in zip(ubi,lbi)]
 
     candidate_vars = sorted(candidate_vars, key=lambda k: widths[k])
-    counter, var_list, model = create_model(nn, LB_N0, UB_N0, nlb, nub, relu_groups, layerno+1, use_milp, partial_milp=-1)
+    counter, var_list, model = create_model(nn, LB_N0, UB_N0, nlb, nub, relu_groups, layerno+1, use_milp, partial_milp=-1, max_milp_neurons=-1)
     resl = [0]*len(lbi)
     resu = [0]*len(ubi)
     indices = []
@@ -862,7 +862,7 @@ def verify_network_with_milp(nn, LB_N0, UB_N0, nlb, nub, constraints, spatial_co
     input_size = len(LB_N0)
     start_milp = time.time()
     counter, var_list, model = create_model(nn, LB_N0, UB_N0, nlb, nub, None, numlayer, use_milp=True, is_nchw=is_nchw,
-                                            partial_milp=-1, max_milp_neurons=int(1e6))
+                                            partial_milp=-1, max_milp_neurons=-1)
     #print("timeout ", config.timeout_milp)
     model.setParam(GRB.Param.Cutoff, 0.01)
 
@@ -915,9 +915,10 @@ def evaluate_models(model_lp, var_list_lp, counter_lp, input_len, contraints, te
     adex_list = []
     label_failed = []
     and_result = True
-    updated_constraint = []
+    updated_constraint = contraints.copy()
     model_bounds = {}
-    for or_list in contraints:
+    for _ in range(len(contraints)):
+        or_list = updated_constraint.pop(0)
         # OR
         or_result = False
         adex_list_or = []
@@ -926,7 +927,10 @@ def evaluate_models(model_lp, var_list_lp, counter_lp, input_len, contraints, te
             obj = obj_from_is_greater_tuple(is_greater_tuple, var_list_lp, counter_lp)
             model_lp.setObjective(obj, GRB.MINIMIZE)
 
-            model_lp.optimize()
+            if model_lp.IsMIP:
+                assert False, "should not happen"
+            else:
+                model_lp.optimize()
             obj_bound = f"{model_lp.objbound:.4f}" if hasattr(model_lp,"objbound") else "failed"
             obj_val = f"{model_lp.objval:.4f}" if hasattr(model_lp, "objval") else "failed"
             print(f"Model status: {model_lp.Status}, Obj val/bound for constraint {is_greater_tuple}: {obj_val}/{obj_bound}, Final solve time: {model_lp.Runtime:.3f}")
@@ -945,6 +949,9 @@ def evaluate_models(model_lp, var_list_lp, counter_lp, input_len, contraints, te
                 obj_bound = f"{model_p_milp.objbound:.4f}" if hasattr(model_p_milp, "objbound") else "failed"
                 obj_val = f"{model_p_milp.objval:.4f}" if hasattr(model_p_milp, "objval") else "failed"
                 print(f"Partial MILP model status: {model_p_milp.Status}, Obj val/bound for constraint {is_greater_tuple}: {obj_val}/{obj_bound}, Final solve time: {model_p_milp.Runtime:.3f}")
+
+                if hasattr(model_p_milp,"objbound"):
+                    model_bounds[is_greater_tuple] = float(model_p_milp.objbound) if model_bounds[is_greater_tuple] is None else np.maximum(model_bounds[is_greater_tuple], float(model_p_milp.objbound))
 
                 if model_p_milp.Status in [2, 6, 9, 11] and model_p_milp.ObjBound > 0:
                     or_result = True

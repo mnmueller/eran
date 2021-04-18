@@ -386,9 +386,10 @@ def run():
             if epsilon_y == 0:
                 mse_nat, y_nat, _ = reg_eval(net_out, net_out, y)
                 is_correctly_classified = True
+                label = float(y_nat)
             else:
                 is_correctly_classified, y_nat, _ = reg_eval(net_out, net_out, y)#(abs(y-net_out[0]) < epsilon_y)
-            label = float(y)
+                label = float(y)
         else:
             is_correctly_classified = (label == y)
             label = int(y)
@@ -415,10 +416,10 @@ def run():
                     res = network.evalAffineExpr_withProp(specLB, specUB, np.array([[1]], dtype=network._last_dtype), back_substitute=1)
                     if epsilon_y == 0:
                         obj_lb, obj_ub = res[0][0:1], res[0][1:2]
-                        mse_cert, y_lb, y_ub = reg_eval(obj_lb, obj_ub, label)
+                        mse_cert, y_lb, y_ub = reg_eval(obj_lb, obj_ub, y)
                         is_verified = False
                     else:
-                        is_verified = reg_eval(res[0][0:1], res[0][1:2], label) #(label-res[0][0] < config.epsilon_y) and (res[0][1]-label < config.epsilon_y)
+                        is_verified = reg_eval(res[0][0:1], res[0][1:2], y) #(label-res[0][0] < config.epsilon_y) and (res[0][1]-label < config.epsilon_y)
                 else:
                     is_verified = network.test(specLB, specUB, label)
                 #print("res ", res)
@@ -438,11 +439,11 @@ def run():
                                                             max_milp_neurons=config.max_milp_neurons,
                                                             approx=config.approx_k,
                                                             max_eqn_per_call=config.max_gpu_batch,
-                                                            terminate_on_failure=not (config.regression and epsilon_y == 0))
+                                                            terminate_on_failure=(not config.complete) and not (config.regression and epsilon_y == 0))
                     if config.regression:
                         if epsilon_y == 0:
                             obj_lb, obj_ub = evaluate_model_bounds(obj_lb, obj_ub, model_bounds)
-                            mse_cert_temp, y_lb, y_ub = reg_eval(obj_lb, obj_ub, label)
+                            mse_cert_temp, y_lb, y_ub = reg_eval(obj_lb, obj_ub, y)
                             mse_cert = np.minimum(mse_cert, mse_cert_temp)
                             is_verified = False
                         else:
@@ -470,10 +471,10 @@ def run():
                     if config.regression:
                         if epsilon_y == 0:
                             obj_lb, obj_ub = nlb[-1], nub[-1]
-                            mse_cert, y_lb, y_ub = reg_eval(obj_lb, obj_ub, label)
+                            mse_cert, y_lb, y_ub = reg_eval(obj_lb, obj_ub, y)
                             is_verified = False
                         else:
-                            is_verified, y_lb, y_ub = is_verified or reg_eval(nlb[-1], nub[-1], label)[0]  # (abs(label - nlb[-1][0]) < epsilon_y and abs(nub[-1][0]-label)<epsilon_y)
+                            is_verified, y_lb, y_ub = is_verified or reg_eval(nlb[-1], nub[-1], y)[0]  # (abs(label - nlb[-1][0]) < epsilon_y and abs(nub[-1][0]-label)<epsilon_y)
                     else:
                         is_verified = is_verified or (perturbed_label == label)
                 if (not is_verified) and (not domain.endswith("poly") or "refine" in domain):
@@ -498,11 +499,11 @@ def run():
                             obj_lb, obj_ub = nlb[-1], nub[-1]
                             if model_bounds is not None:
                                 obj_lb, obj_ub = evaluate_model_bounds(obj_lb, obj_ub, model_bounds)
-                            mse_cert_temp, y_lb, y_ub = reg_eval(obj_lb, obj_ub, label)
+                            mse_cert_temp, y_lb, y_ub = reg_eval(obj_lb, obj_ub, y)
                             mse_cert = mse_cert_temp if mse_cert is None else np.minimum(mse_cert, mse_cert_temp)
                             is_verified = False
                         else:
-                            is_verified = is_verified or reg_eval(nlb[-1], nub[-1], label)[0]  # (abs(label - nlb[-1][0]) < epsilon_y and abs(nub[-1][0]-label)<epsilon_y)
+                            is_verified = is_verified or reg_eval(nlb[-1], nub[-1], y)[0]  # (abs(label - nlb[-1][0]) < epsilon_y and abs(nub[-1][0]-label)<epsilon_y)
                     else:
                         is_verified = is_verified or (perturbed_label == label)
             if is_verified or (config.regression and epsilon_y == 0):
@@ -517,7 +518,7 @@ def run():
                     for x_i in x:
                         cex_label, cex_out = evaluate_net(x_i, domain, network if "gpu" in domain else None, eran if "gpu" not in domain else None)
                         if config.regression:
-                            adex_found, y_adv, _ = reg_eval(cex_out, cex_out, label)#abs(y - cex_out[0]) > epsilon_y
+                            adex_found, y_adv, _ = reg_eval(cex_out, cex_out, y)#abs(y - cex_out[0]) > epsilon_y
                         else:
                             adex_found = cex_label != label
                         if adex_found:
@@ -538,7 +539,7 @@ def run():
                         else:
                             cex_label, cex_out = evaluate_net(x, domain, network if "gpu" in domain else None, eran if "gpu" not in domain else None)
                             if config.regression:
-                                adex_found, y_adv, _ = reg_eval(cex_out, cex_out, label)#abs(y - cex_out[0]) > epsilon_y
+                                adex_found, y_adv, _ = reg_eval(cex_out, cex_out, y)#abs(y - cex_out[0]) > epsilon_y
                             else:
                                 adex_found = cex_label != label
                             if adex_found:

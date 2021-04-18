@@ -175,7 +175,7 @@ class Optimizer:
                 nn.input_shape.append([image_shape[0],image_shape[1],image_shape[2]])
                 nn.strides.append([strides[0],strides[1]])
                 nn.out_shapes.append(output_shape)
-                nn.padding.append([pad_top, pad_left])
+                nn.padding.append([pad_top, pad_left, pad_bottom, pad_right])
                 nn.numlayer+=1
                 is_maxpool = (self.operations[i]=="MaxPool")
                 if is_maxpool:
@@ -518,12 +518,18 @@ class Optimizer:
                 last_layer = "FC"
                 i += 1
 
-            elif self.operations[i] == "MaxPoool":
+            elif self.operations[i] == "MaxPool":
+                raise NotImplementedError
                 image_shape, kernel_shape, strides, pad_top, pad_left, pad_bottom, pad_right, m_input_names, b_output_name, b_output_shape = self.resources[i][domain]
                 padding = [pad_top, pad_left, pad_bottom, pad_right]
-                network.add_maxpool_2d(kernel_shape, image_shape[0], image_shape[1], image_shape[2], strides, padding)
+                network.add_maxpool_2d(kernel_shape, image_shape[2], image_shape[0], image_shape[1], strides, padding)
+                nn.pool_size.append(kernel_shape)
+                nn.input_shape.append([image_shape[2],image_shape[0],image_shape[1]])
+                nn.strides.append([strides[0],strides[1]])
+                nn.out_shapes.append([b_output_shape[0], b_output_shape[3], b_output_shape[1], b_output_shape[2]])
+                nn.padding.append([pad_top, pad_left, pad_bottom, pad_right])
                 nn.numlayer += 1
-                num_gpu_layers += 2
+                num_gpu_layers += 1
                 i += 1
 
             elif self.operations[i] == "Conv2D":
@@ -543,7 +549,7 @@ class Optimizer:
                 nn.strides.append([strides[0],strides[1]])
                 nn.padding.append([pad_top, pad_left, pad_bottom, pad_right])
                 nn.out_shapes.append([b_output_shape[0], b_output_shape[3], b_output_shape[1], b_output_shape[2]])
-                nn.filters.append(np.transpose(filters,[3,2,0, 1]))
+                nn.filters.append(np.transpose(filters,[3,2,0,1]))
                 nn.biases.append(bias)
                 nn.layertypes.append('Conv')
                 #print("filter shape ", nn.out_shapes[-1])

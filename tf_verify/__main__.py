@@ -1376,7 +1376,7 @@ else:
 
                     perturbed_label, nn, nlb, nub, failed_constraints, x, model_bounds = refine_gpupoly_results(nn, network, config, relu_layers, label,
                                                             adv_labels=prop, K=config.k, s=config.s,
-                                                            complete=config.complete,
+                                                            complete=False,
                                                             timeout_final_lp=config.timeout_final_lp,
                                                             timeout_final_milp=config.timeout_final_milp,
                                                             timeout_lp=config.timeout_lp,
@@ -1384,7 +1384,9 @@ else:
                                                             use_milp=config.use_milp,
                                                             partial_milp=config.partial_milp,
                                                             max_milp_neurons=config.max_milp_neurons,
-                                                            approx=config.approx_k)
+                                                            approx=config.approx_k,
+                                                            terminate_on_failure=not config.complete)
+                    is_verified = perturbed_label == label
             else:
                 if domain.endswith("poly"):
                     # First do a cheap pass without PRIMA
@@ -1403,7 +1405,8 @@ else:
                                                                                       approx_k=0)
                     if config.debug:
                         print("nlb ", nlb[-1], " nub ", nub[-1],"adv labels ", failed_constraints)
-                if (perturbed_label != label) and (not domain.endswith("poly") or "refine" in domain):
+                    is_verified = perturbed_label == label
+                if (not is_verified) and (not domain.endswith("poly") or "refine" in domain):
                     # Do a second more precise run, for refinepoly
                     perturbed_label, _, nlb, nub, failed_constraints, x, _ = eran.analyze_box(specLB, specUB, domain,
                                                                                       config.timeout_lp,
@@ -1414,20 +1417,20 @@ else:
                                                                                       timeout_final_lp=config.timeout_final_lp,
                                                                                       timeout_final_milp=config.timeout_final_milp,
                                                                                       use_milp=config.use_milp,
-                                                                                      complete=config.complete,
+                                                                                      complete=False,
                                                                                       terminate_on_failure=not config.complete,
                                                                                       partial_milp=config.partial_milp,
                                                                                       max_milp_neurons=config.max_milp_neurons,
                                                                                       approx_k=config.approx_k)
                     if config.debug:
                         print("nlb ", nlb[-1], " nub ", nub[-1], "adv labels ", failed_constraints)
-            if perturbed_label == label:
-                is_verified = True
+                    is_verified = perturbed_label == label
+            if is_verified:
                 print("img", i, "Verified", label)
                 verified_images += 1
             else:
                 if complete and (failed_constraints is not None):
-                    is_verified, adv_image, adv_val = verify_network_with_milp(nn, specLB, specUB, nlb, nub, failed_constraints)
+                    is_verified, adv_image, adv_val = verify_network_with_milp(nn, specLB, specUB, nlb, nub, failed_constraints, is_nchw="gpu" in domain)
                     if is_verified:
                         print("img", i, "Verified", label, "using MILP against", failed_constraints)
                         verified_images += 1
