@@ -13,7 +13,7 @@
   See the License for the specific language governing permissions and
   limitations under the License.
 """
-
+import warnings
 
 import numpy as np
 import onnx
@@ -398,7 +398,22 @@ class ONNXTranslator:
 		assert all_inputs[0] in inputs_dir
 
 		return inputs_dir[all_inputs[0]]
-	
+
+	@staticmethod
+	def clean_shape(shape_raw):
+		'''
+		Onnx translator expects the inputs and outputs of each node to not have 0-sized dimensions.
+		These can occur, if other formats are converted to onnx instead of directly exporting an onnx model.
+		This function handles such occurances, setting the 0-sized dimension to 1.
+
+		Arguments
+		--------
+		shape_raw : A shape in form of a list
+		'''
+		shape_cleaned = [1 if x == 0 else x for x in shape_raw]
+		if 0 in shape_raw:
+			warnings.warn(f"0-sized dimension encountered: {shape_raw} and changed to: {shape_cleaned}",RuntimeWarning)
+		return shape_cleaned
 		
 	def translate(self):
 		"""
@@ -413,9 +428,8 @@ class ONNXTranslator:
 		    operation_types[i] when analyzed with domain (domain is currently either 'deepzono' or 'deeppoly', as of 8/30/18)
 		"""
 		operation_types     = ["Placeholder"]
-		# placeholder = self.model.graph.input[0]
 		placeholder = self.find_input()
-		in_out_placeholder = ([], placeholder.name, onnxshape_to_intlist(placeholder.type.tensor_type.shape))
+		in_out_placeholder = ([], placeholder.name, self.clean_shape(onnxshape_to_intlist(placeholder.type.tensor_type.shape)))
 		operation_resources = [{'deepzono':in_out_placeholder, 'deeppoly':in_out_placeholder}]
 		reshape_map = {}
 		operations_to_be_ignored = ["Pack", "Shape", "StridedSlice", "Prod", "Unsqueeze", "Softmax", "Flatten", "Concat", "BatchNormalization"]
@@ -459,6 +473,7 @@ class ONNXTranslator:
 					continue
 				input_onnx_names.append(name)
 			shape = self.get_shape(node.output[0])
+			shape = self.clean_shape(shape)
 			in_out_info = (input_onnx_names, node.output[0], shape)
 
 			if node.op_type == "MatMul":
@@ -588,6 +603,8 @@ class ONNXTranslator:
 
 			else:
 				assert 0, "Operations of type " + node.op_type + " are not yet supported."
+
+			assert all([0 not in y[-1] for x in operation_resources for y in x.values()]), "Ensure inputs and outpus include no dimensions of size 0"
 
 		return operation_types, operation_resources
 
