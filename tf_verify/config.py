@@ -45,7 +45,7 @@ class config:
     std = None # the standard deviation used to normalize the data with
     num_tests = None # Number of images to test
     from_test = 0 # From which number to start testing
-    data_dillation = 1
+    data_dilation = 1
     debug = False # Whether to display debug info
     subset = None
     target = None # 

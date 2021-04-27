@@ -417,7 +417,7 @@ elif not config.geometric:
 
 dataset = config.dataset
 
-if zonotope_bool==False:
+if zonotope_bool==False and not config.vnn_lib_spec:
    assert dataset in ['mnist', 'cifar10', 'acasxu', 'fashion'], "only mnist, cifar10, acasxu, and fashion datasets are supported"
 
 mean = 0
@@ -510,9 +510,23 @@ cum_time = 0
 
 if config.vnn_lib_spec is not None:
     # input and output constraints in homogenized representation x >= C_lb * [x_0, eps, 1]; C_out [y, 1] >= 0
-    C_lb, C_ub, C_out = parse_vnn_lib_prop(config.vnn_lib_spec)
-    constraints = translate_output_constraints(C_out)
-    boxes = translate_input_to_box(C_lb, C_ub, x_0=None, eps=None, domain_bounds=None)
+
+    if os.path.isdir(config.vnn_lib_spec):
+        vnn_lib_spec_files = [os.path.join(config.vnn_lib_spec, f) for f in os.listdir(config.vnn_lib_spec) if os.path.isfile(os.path.join(config.vnn_lib_spec, f))]
+    elif os.path.isfile(config.vnn_lib_spec):
+        vnn_lib_spec_files = [config.vnn_lib_spec]
+    else:
+        vnn_lib_spec_files = []
+
+    vnn_lib_spec_files = [f for f in vnn_lib_spec_files if f.endswith(".vnnlib")]
+
+    assert len(vnn_lib_spec_files)>0, "No .vnnlib file found in indicated location"
+
+    boxes, constraints = [], []
+    for f in vnn_lib_spec_files:
+        C_lb, C_ub, C_out = parse_vnn_lib_prop(f)
+        constraints.append(translate_output_constraints(C_out))
+        boxes += translate_input_to_box(C_lb, C_ub, x_0=None, eps=None, domain_bounds=None)
 else:
     if config.output_constraints:
         constraints = get_constraints_from_file(config.output_constraints)
@@ -1300,8 +1314,7 @@ else:
         targets = csv.reader(targetfile, delimiter=',')
         for i, val in enumerate(targets):
             target = val   
-   
-   
+
     if config.epsfile != None:
         epsfile = open(config.epsfile, 'r')
         epsilons = csv.reader(epsfile, delimiter=',')
@@ -1314,7 +1327,7 @@ else:
 
         if config.num_tests is not None and i >= config.from_test + config.num_tests:
             break
-        image= np.float64(test[1:len(test)])/np.float64(255)
+        image = np.float64(test[1:len(test)])/np.float64(255)
         specLB = np.copy(image)
         specUB = np.copy(image)
         if config.quant_step:

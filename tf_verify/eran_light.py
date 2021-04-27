@@ -245,7 +245,7 @@ def get_args():
 
     parser.add_argument('--num_tests', type=int, default=config.num_tests, help='Number of images to test')
     parser.add_argument('--from_test', type=int, default=config.from_test, help='Number of images to test')
-    parser.add_argument('--data_dillation', type=int, default=config.data_dillation, help='Use only every nth image')
+    parser.add_argument('--data_dilation', type=int, default=config.data_dilation, help='Use only every nth image')
     parser.add_argument('--debug', action='store_true', default=config.debug, help='Whether to display debug info')
 
     # PRIMA parameters
@@ -306,19 +306,52 @@ def evaluate_model_bounds(obj_lb, obj_ub, model_bounds):
     return obj_lb, obj_ub
 
 
-def run():
+def get_regression_evaluation_function(epsilon_y, omitted_layers):
+    ### Define evaluation of the output of a regression network, potentially applying a final non-linearity
+    if epsilon_y == 0:
+        if omitted_layers is None:
+            def reg_eval(lb, ub, target):
+                return np.maximum(np.square(lb[0] - target), np.square(ub[0] - target)), lb[0], ub[0]
+        elif omitted_layers == ["Tanh"]:
+            def reg_eval(lb, ub, target):
+                return np.maximum(np.square(np.tanh(lb[0]) - target), np.square(np.tanh(ub[0]) - target)), np.tanh(
+                    lb[0]), np.tanh(ub[0])
+        elif omitted_layers == ["Sigmoid"]:
+            def reg_eval(lb, ub, target):
+                return np.maximum(np.square(1 / (1 + np.exp(-lb[0])) - target),
+                                  np.square(1 / (1 + np.exp(-ub[0])) - target)), 1 / (1 + np.exp(-lb[0])), 1 / (
+                                   1 + np.exp(-ub[0]))
+        else:
+            assert False
+    else:
+        if omitted_layers is None:
+            def reg_eval(lb, ub, target):
+                return (lb[0] > target - epsilon_y).__and__(ub[0] < target + epsilon_y), lb[0], ub[0]
+        elif omitted_layers == ["Tanh"]:
+            def reg_eval(lb, ub, target):
+                return (np.tanh(lb[0]) > target - epsilon_y).__and__(np.tanh(ub[0]) < target + epsilon_y), np.tanh(
+                    lb[0]), np.tanh(ub[0])
+        elif omitted_layers == ["Sigmoid"]:
+            def reg_eval(lb, ub, target):
+                return (1 / (1 + np.exp(-lb[0])) > target - epsilon_y).__and__(
+                    1 / (1 + np.exp(-ub[0])) < target + epsilon_y), 1 / (1 + np.exp(-lb[0])), 1 / (1 + np.exp(-ub[0]))
+        else:
+            assert False
+    return reg_eval
+
+
+def run_analysis():
     config = get_args()
 
     netname = config.netname
-
-    epsilon = config.epsilon
-    epsilon_y = config.epsilon_y
-
     domain = config.domain
 
+    epsilon = config.epsilon
+    epsilon_y = config.epsilon_y ### if epsilon_y is set to 0 bounds on output are computed, otherwise verification is attempted
+
+    ### Prepare analysis, translating the model
     model, is_conv = read_onnx_net(netname)
     nn = layers()
-
     if domain == 'gpupoly' or domain == 'refinegpupoly':
         translator = ONNXTranslator(model, True)
         operations, resources = translator.translate()
@@ -328,8 +361,9 @@ def run():
         eran = ERAN(model, is_onnx=True)
         omitted_layers = None
 
-    os.sched_setaffinity(0,cpu_affinity)
+    os.sched_setaffinity(0, cpu_affinity)
 
+    ### Initialize counters
     correctly_classified_images = 0
     verified_images = 0
     unsafe_images = 0
@@ -340,55 +374,36 @@ def run():
     test_data_loader, mean, std, is_nchw, input_shape = get_data_loader()
 
     if config.regression:
-        if epsilon_y == 0:
-            if omitted_layers is None:
-                def reg_eval(lb, ub, target):
-                    return np.maximum(np.square(lb[0] - target), np.square(ub[0] - target)), lb[0], ub[0]
-            elif omitted_layers == ["Tanh"]:
-                def reg_eval(lb, ub, target):
-                    return np.maximum(np.square(np.tanh(lb[0]) - target), np.square(np.tanh(ub[0]) - target)), np.tanh(lb[0]), np.tanh(ub[0])
-            elif omitted_layers == ["Sigmoid"]:
-                def reg_eval(lb, ub, target):
-                    return np.maximum(np.square(1/(1 + np.exp(-lb[0])) - target), np.square(1/(1 + np.exp(-ub[0])) - target)), 1/(1 + np.exp(-lb[0])), 1/(1 + np.exp(-ub[0]))
-            else:
-                assert False
-        else:
-            if omitted_layers is None:
-                def reg_eval(lb, ub, target):
-                    return (lb[0] > target - epsilon_y).__and__(ub[0] < target + epsilon_y), lb[0], ub[0]
-            elif omitted_layers == ["Tanh"]:
-                def reg_eval(lb, ub, target):
-                    return (np.tanh(lb[0]) > target - epsilon_y).__and__(np.tanh(ub[0]) < target + epsilon_y), np.tanh(lb[0]), np.tanh(ub[0])
-            elif omitted_layers == ["Sigmoid"]:
-                def reg_eval(lb, ub, target):
-                    return (1/(1 + np.exp(-lb[0])) > target - epsilon_y).__and__(1/(1 + np.exp(-ub[0])) < target + epsilon_y), 1/(1 + np.exp(-lb[0])), 1/(1 + np.exp(-ub[0]))
-            else:
-                assert False
+        reg_eval = get_regression_evaluation_function(epsilon_y, omitted_layers)
 
     for i, (x, y) in enumerate(test_data_loader):
         if config.from_test and i < config.from_test:
+            # skip samples up to config.from_test
             continue
-        if i % config.data_dillation != 0:
+        if i % config.data_dilation != 0:
+            # evaluate only every config.data_dilation sample
             continue
-        if config.num_tests is not None and i >= (config.from_test + config.num_tests*config.data_dillation):
+        if config.num_tests is not None and i >= (config.from_test + config.num_tests*config.data_dilation):
+            # stop analysis once config.num_tests samples have been evaluated
             break
 
         image = np.float64(x).reshape(input_shape)
-        y = np.float(y) if config.regression else np.int(y)
-        obj_lb, obj_ub, mse_cert, y_adv = None, None, None, None
         image_normalized = normalize(image, mean, std, is_nchw, input_shape).reshape(-1)
+        y = np.float(y) if config.regression else np.int(y)
 
+        obj_lb, obj_ub, mse_cert, y_adv = None, None, None, None
         start = time.time()
 
+        # Get prediction for unperturbed sample
         label, net_out = evaluate_net(image_normalized, domain, network if "gpu" in domain else None, eran if "gpu" not in domain else None)
 
         if config.regression:
             if epsilon_y == 0:
                 mse_nat, y_nat, _ = reg_eval(net_out, net_out, y)
                 is_correctly_classified = True
-                label = float(y_nat)
+                label = float(y_nat) ### When computing bounds on the network prediction use natural prediction as label
             else:
-                is_correctly_classified, y_nat, _ = reg_eval(net_out, net_out, y)#(abs(y-net_out[0]) < epsilon_y)
+                is_correctly_classified, y_nat, _ = reg_eval(net_out, net_out, y)
                 label = float(y)
         else:
             is_correctly_classified = (label == y)
@@ -397,7 +412,6 @@ def run():
         ## start certification
         if is_correctly_classified:
             # Only attemp certificaiton for correctly classified samples
-            perturbed_label = -1
             correctly_classified_images += 1
             failed_constraints = None
             is_verified = False
@@ -409,7 +423,7 @@ def run():
             specLB = specLB.reshape(-1)
             specUB = specUB.reshape(-1)
 
-            prop = -1
+            prop = -1 ### Evaluate against all adversarial classes
 
             if domain == 'gpupoly' or domain =='refinegpupoly':
                 if config.regression:
@@ -419,10 +433,10 @@ def run():
                         mse_cert, y_lb, y_ub = reg_eval(obj_lb, obj_ub, y)
                         is_verified = False
                     else:
-                        is_verified = reg_eval(res[0][0:1], res[0][1:2], y) #(label-res[0][0] < config.epsilon_y) and (res[0][1]-label < config.epsilon_y)
+                        is_verified = reg_eval(res[0][0:1], res[0][1:2], y)
                 else:
                     is_verified = network.test(specLB, specUB, label)
-                #print("res ", res)
+
                 if not is_verified and domain == 'refinegpupoly':
                     nn.specLB = specLB
                     nn.specUB = specUB
@@ -447,12 +461,12 @@ def run():
                             mse_cert = np.minimum(mse_cert, mse_cert_temp)
                             is_verified = False
                         else:
-                            is_verified = is_verified or (failed_constraints is None) #(abs(label - nlb[-1][0]) < epsilon_y and abs(nub[-1][0]-label)<epsilon_y)
+                            is_verified = is_verified or (failed_constraints is None)
                     else:
                         is_verified = is_verified or (perturbed_label == label)
             else:
                 if domain.endswith("poly"):
-                    # First do a cheap pass without PRIMA
+                    # First do a cheap pass without multi-neuron constraints
                     perturbed_label, nn, nlb, nub, failed_constraints, x, _ = eran.analyze_box(specLB, specUB, "deeppoly",
                                                                                       config.timeout_lp,
                                                                                       config.timeout_milp,
@@ -474,11 +488,10 @@ def run():
                             mse_cert, y_lb, y_ub = reg_eval(obj_lb, obj_ub, y)
                             is_verified = False
                         else:
-                            is_verified, y_lb, y_ub = is_verified or reg_eval(nlb[-1], nub[-1], y)[0]  # (abs(label - nlb[-1][0]) < epsilon_y and abs(nub[-1][0]-label)<epsilon_y)
+                            is_verified, y_lb, y_ub = is_verified or reg_eval(nlb[-1], nub[-1], y)[0]
                     else:
                         is_verified = is_verified or (perturbed_label == label)
                 if (not is_verified) and (not domain.endswith("poly") or "refine" in domain):
-                    # Do a second more precise run, for refinepoly
                     perturbed_label, nn, nlb, nub, failed_constraints, x, model_bounds = eran.analyze_box(specLB, specUB, domain,
                                                                                       config.timeout_lp,
                                                                                       config.timeout_milp,
@@ -503,22 +516,22 @@ def run():
                             mse_cert = mse_cert_temp if mse_cert is None else np.minimum(mse_cert, mse_cert_temp)
                             is_verified = False
                         else:
-                            is_verified = is_verified or reg_eval(nlb[-1], nub[-1], y)[0]  # (abs(label - nlb[-1][0]) < epsilon_y and abs(nub[-1][0]-label)<epsilon_y)
+                            is_verified = is_verified or reg_eval(nlb[-1], nub[-1], y)[0]
                     else:
                         is_verified = is_verified or (perturbed_label == label)
-            if is_verified or (config.regression and epsilon_y == 0):
-                if is_verified:
-                    print("img", i, "Verified", label)
-                    verified_images += 1
-                else:
-                    print(f"img {i}: y: {y:.4f}; y_nat: {y_nat:.4f}; y_lb/ub: {y_lb:.4f}/{y_ub:.4f} natural MSE: {mse_nat:.4e} and certified MSE: {mse_cert:.4e}")
+            if is_verified:
+                print("img", i, "Verified", label)
+                verified_images += 1
+            elif config.regression and epsilon_y == 0:
+                print(f"img {i}: y: {y:.4f}; y_nat: {y_nat:.4f}; y_lb/ub: {y_lb:.4f}/{y_ub:.4f} natural MSE: {mse_nat:.4e} and certified MSE: {mse_cert:.4e}")
             else:
                 adex_found = False
                 if x is not None:
                     for x_i in x:
+                        # Check if returned solution is an adversarial example
                         cex_label, cex_out = evaluate_net(x_i, domain, network if "gpu" in domain else None, eran if "gpu" not in domain else None)
                         if config.regression:
-                            adex_found, y_adv, _ = reg_eval(cex_out, cex_out, y)#abs(y - cex_out[0]) > epsilon_y
+                            adex_found, y_adv, _ = reg_eval(cex_out, cex_out, y)
                         else:
                             adex_found = cex_label != label
                         if adex_found:
@@ -531,15 +544,16 @@ def run():
                             break
                 if not adex_found:
                     if config.complete and (failed_constraints is not None):
-                        is_verified, x, adv_val = verify_network_with_milp(nn, specLB, specUB, nlb, nub,
-                                                                                   failed_constraints)
+                        # Run complete verification on uncertified constraints
+                        is_verified, x, adv_val = verify_network_with_milp(nn, specLB, specUB, nlb, nub, failed_constraints)
                         if is_verified:
                             print("img", i, "Verified", label, "using MILP against", failed_constraints)
                             verified_images += 1
                         else:
+                            # Check if returned feasible solution is an adversarial example
                             cex_label, cex_out = evaluate_net(x, domain, network if "gpu" in domain else None, eran if "gpu" not in domain else None)
                             if config.regression:
-                                adex_found, y_adv, _ = reg_eval(cex_out, cex_out, y)#abs(y - cex_out[0]) > epsilon_y
+                                adex_found, y_adv, _ = reg_eval(cex_out, cex_out, y)
                             else:
                                 adex_found = cex_label != label
                             if adex_found:
@@ -554,25 +568,27 @@ def run():
                                 print(f"img {i} Failed, without a adversarial example")
                     else:
                         print(f"img {i} Failed")
+            end = time.time()
+            cum_time += end - start  # only count samples where we did try to certify
         else:
+            end = time.time()
             print(f"img {i} not considered, incorrectly classified")
 
-        end = time.time()
-        cum_time += end - start  # only count samples where we did try to certify
+
 
         dave_plot(image_normalized, i, mean, std, is_nchw, input_shape, y, y_nat, y_lb, y_ub, y_adv=None, show=False)
 
         if config.regression and epsilon_y == 0:
             mse_nat_total.append(mse_nat)
             mse_cert_total.append(mse_cert)
-            print(f"progress: {1 + i/config.data_dillation - config.from_test:.0f}/{config.num_tests}, "
+            print(f"progress: {1 + i/config.data_dilation - config.from_test:.0f}/{config.num_tests}, "
                   f"nat MSE:  {np.median(mse_nat_total):.4e}/{np.mean(mse_nat_total):.4e}, "
                   f"cert MSE: {np.median(mse_cert_total):.4e}/{np.mean(mse_cert_total):.4e}, "
                   f"time: {end - start:.3f}; {0 if correctly_classified_images==0 else cum_time / correctly_classified_images:.3f}; {cum_time:.3f}")
 
         else:
-            print(f"progress: {1 + i/config.data_dillation - config.from_test:d}/{config.num_tests}, "
-                  f"correct:  {correctly_classified_images}/{1 + i/config.data_dillation - config.from_test}, "
+            print(f"progress: {1 + i/config.data_dilation - config.from_test:d}/{config.num_tests}, "
+                  f"correct:  {correctly_classified_images}/{1 + i/config.data_dilation - config.from_test}, "
                   f"verified: {verified_images}/{correctly_classified_images}, "
                   f"unsafe: {unsafe_images}/{correctly_classified_images}, ",
                   f"time: {end - start:.3f}; {0 if correctly_classified_images==0 else cum_time / correctly_classified_images:.3f}; {cum_time:.3f}")
@@ -582,4 +598,4 @@ def run():
     print(f'certified images: {verified_images}; analysis precision ',verified_images + unsafe_images,'/ ', correctly_classified_images)
 
 if __name__ == '__main__':
-    run()
+    run_analysis()
