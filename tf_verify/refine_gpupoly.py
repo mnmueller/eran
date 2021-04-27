@@ -159,13 +159,6 @@ def refine_gpupoly_results(nn, network, config, relu_layers, true_label, adv_lab
         model.setParam(GRB.Param.Cutoff, 0.01)
 
     if partial_milp != 0:
-        nn.ffn_counter = 0
-        nn.conv_counter = 0
-        nn.pool_counter = 0
-        nn.concat_counter = 0
-        nn.tile_counter = 0
-        nn.residual_counter = 0
-        nn.activation_counter = 0
         counter_partial_milp, var_list_partial_milp, model_partial_milp = create_model(nn, nn.specLB, nn.specUB, nlb,
                                                                                        nub, relu_groups, nn.numlayer,
                                                                                        False, is_nchw=True,

@@ -525,41 +525,36 @@ def handle_tanh_sigmoid(model, var_list, affine_counter, num_neurons, lbi, ubi,
 
 def create_model(nn, LB_N0, UB_N0, nlb, nub, relu_groups, numlayer, use_milp, is_nchw=False, partial_milp=0, max_milp_neurons=-1):
     model = Model("milp")
-
     model.setParam("OutputFlag",0)
     model.setParam(GRB.Param.FeasibilityTol, 2e-5)
 
     milp_activation_layers = np.nonzero([l in ["ReLU", "Maxpool"] for l in nn.layertypes])[0]
 
+    ### Determine whcich layers, if any to encode with MILP
     if partial_milp < 0:
         partial_milp = len(milp_activation_layers)
-
     first_milp_layer = len(nn.layertypes) if partial_milp == 0 else milp_activation_layers[-min(partial_milp, len(milp_activation_layers))]
 
     num_pixels = len(LB_N0)
-    #output_counter = num_pixels
-    ffn_counter = nn.ffn_counter
-    conv_counter = nn.conv_counter
-    residual_counter = nn.residual_counter
-    pool_counter = nn.pool_counter
-    pad_counter = nn.pad_counter
-    activation_counter = nn.activation_counter
-    
-    nn.ffn_counter = 0
-    nn.conv_counter = 0
-    nn.residual_couter = 0
-    nn.pool_counter = 0
-    nn.pad_counter = 0
-    nn.activation_counter = 0
+
+    ### Set layer counters to 0, later used to access layer resources
+    ffn_counter = 0
+    conv_counter = 0
+    residual_counter = 0
+    pool_counter = 0
+    pad_counter = 0
+    activation_counter = 0
 
     var_list = []
     counter = 0
-    # TODO zonotope
+
+    ### Encode inputs, either from box or zonotope
     if len(UB_N0)==0:
+        ### Zonotope
         num_pixels = nn.zonotope.shape[0]
         num_error_terms = nn.zonotope.shape[1]
         for j in range(num_error_terms-1):
-            var_name = "x" + str(j)
+            var_name = "e" + str(j)
             var = model.addVar(vtype=GRB.CONTINUOUS, lb=-1, ub=1, name=var_name)
             var_list.append(var)
         counter = num_error_terms-1
@@ -569,19 +564,17 @@ def create_model(nn, LB_N0, UB_N0, nlb, nub, relu_groups, numlayer, use_milp, is
             for j in range(1,num_error_terms):
                 lower_bound = lower_bound - abs(nn.zonotope[i][j])
                 upper_bound = upper_bound + abs(nn.zonotope[i][j])
-            var_name = "x" + str(counter+i)
+            var_name = "x" + str(i)
             var = model.addVar(vtype=GRB.CONTINUOUS, lb=lower_bound, ub=upper_bound, name=var_name)
             var_list.append(var)
             expr = LinExpr()
             expr += -1 * var_list[counter + i]
             for j in range(num_error_terms-1):
-                expr.addTerms(nn.zonotope[i][j+1],var_list[j])
+                expr.addTerms(nn.zonotope[i][j+1], var_list[j])
 
             expr.addConstant(nn.zonotope[i][0])
             model.addConstr(expr, GRB.EQUAL, 0)
-
     else:
-        # Encode inputs
         for i in range(num_pixels):
             var_name = "x" + str(i)
             var = model.addVar(vtype=GRB.CONTINUOUS, lb = LB_N0[i], ub=UB_N0[i], name=var_name)
@@ -589,30 +582,28 @@ def create_model(nn, LB_N0, UB_N0, nlb, nub, relu_groups, numlayer, use_milp, is
 
     start_counter = []
     start_counter.append(counter)
+    ### Add layers to model one by one
     for i in range(numlayer):
-        #count = nn.ffn_counter + nn.conv_counter
         if nn.layertypes[i] in ['SkipCat']:
             continue
         elif nn.layertypes[i] in ['FC']:
-            weights = nn.weights[nn.ffn_counter]
-            biases = nn.biases[nn.ffn_counter+nn.conv_counter]
+            weights = nn.weights[ffn_counter]
+            biases = nn.biases[ffn_counter+conv_counter]
             index = nn.predecessors[i+1][0]
             #print("index ", index, start_counter,i, len(relu_groups))
             counter = start_counter[index]
             counter = handle_affine(model, var_list, counter, weights, biases, nlb[i], nub[i])
-            nn.ffn_counter += 1
+            ffn_counter += 1
             start_counter.append(counter)
 
         elif(nn.layertypes[i]=='ReLU'):
             index = nn.predecessors[i+1][0]
-
             partial_milp_neurons = max_milp_neurons * (first_milp_layer <= i)
-
             if relu_groups is None:
                 counter = handle_relu(model, var_list, counter, len(nlb[i]), nlb[index-1], nub[index-1], [], use_milp, partial_milp_neurons)
             else:
-                counter = handle_relu(model, var_list, counter, len(nlb[i]), nlb[index-1], nub[index-1], relu_groups[nn.activation_counter], use_milp, partial_milp_neurons)
-            nn.activation_counter += 1
+                counter = handle_relu(model, var_list, counter, len(nlb[i]), nlb[index-1], nub[index-1], relu_groups[activation_counter], use_milp, partial_milp_neurons)
+            activation_counter += 1
             start_counter.append(counter)
 
         elif nn.layertypes[i] == 'Sigmoid' or nn.layertypes[i] == 'Tanh':
@@ -622,79 +613,68 @@ def create_model(nn, LB_N0, UB_N0, nlb, nub, relu_groups, numlayer, use_milp, is
                                           [], nn.layertypes[i])
             else:
                 counter = handle_tanh_sigmoid(model, var_list, counter, len(nlb[i]), nlb[index-1], nub[index-1],
-                                          relu_groups[nn.activation_counter], nn.layertypes[i])
-
-            nn.activation_counter += 1
+                                          relu_groups[activation_counter], nn.layertypes[i])
+            activation_counter += 1
             start_counter.append(counter)
             
         elif nn.layertypes[i] == 'Sign':
             index = nn.predecessors[i+1][0]
             counter = handle_sign(model, var_list, counter, len(nlb[i]), nlb[index-1], nub[index-1])
-            nn.activation_counter += 1
+            activation_counter += 1
             start_counter.append(counter)
 
         elif nn.layertypes[i] in ['Conv']:
-            filters = nn.filters[nn.conv_counter]
-            biases = nn.biases[nn.ffn_counter + nn.conv_counter]
-            filter_size = nn.filter_size[nn.conv_counter]
-            numfilters = nn.numfilters[nn.conv_counter]
-            out_shape = nn.out_shapes[nn.conv_counter + nn.pool_counter + nn.pad_counter]
-            padding = nn.padding[nn.conv_counter + nn.pool_counter + nn.pad_counter]
-            strides = nn.strides[nn.conv_counter + nn.pool_counter]
-            input_shape = nn.input_shape[nn.conv_counter + nn.pool_counter + nn.pad_counter]
-            num_neurons = np.prod(out_shape)
-
+            filters = nn.filters[conv_counter]
+            biases = nn.biases[ffn_counter + conv_counter]
+            filter_size = nn.filter_size[conv_counter]
+            out_shape = nn.out_shapes[conv_counter + pool_counter + pad_counter]
+            padding = nn.padding[conv_counter + pool_counter + pad_counter]
+            strides = nn.strides[conv_counter + pool_counter]
+            input_shape = nn.input_shape[conv_counter + pool_counter + pad_counter]
             index = nn.predecessors[i+1][0]
             counter = start_counter[index]
             counter = handle_conv(model, var_list, counter, filters, biases, filter_size, input_shape, strides,
                                   out_shape, padding[0], padding[1], padding[2], padding[3], nlb[i], nub[i], is_nchw=is_nchw)
             start_counter.append(counter)
-
-            nn.conv_counter+=1
-
+            conv_counter += 1
 
         elif(nn.layertypes[i]=='Maxpool'):
             partial_milp_neurons = max_milp_neurons * (first_milp_layer <= i)
-
-            pool_size = nn.pool_size[nn.pool_counter]
-            input_shape = nn.input_shape[nn.conv_counter + nn.pool_counter + nn.pad_counter]
-            out_shape = nn.out_shapes[nn.conv_counter + nn.pool_counter + nn.pad_counter]
-            padding = nn.padding[nn.conv_counter + nn.pool_counter + nn.pad_counter]
-            strides = nn.strides[nn.conv_counter + nn.pool_counter]
+            pool_size = nn.pool_size[pool_counter]
+            input_shape = nn.input_shape[conv_counter + pool_counter + pad_counter]
+            out_shape = nn.out_shapes[conv_counter + pool_counter + pad_counter]
+            padding = nn.padding[conv_counter + pool_counter + pad_counter]
+            strides = nn.strides[conv_counter + pool_counter]
             index = nn.predecessors[i+1][0]
             counter = start_counter[index]
-            counter = handle_maxpool(model,var_list,i,counter,pool_size, input_shape, strides, out_shape, padding[0], padding[1], nlb[i],nub[i], nlb[i-1], nub[i-1], use_milp)
+            counter = handle_maxpool(model,var_list,i,counter,pool_size, input_shape, strides, out_shape, padding[0], padding[1], nlb[i], nub[i], nlb[i-1], nub[i-1], use_milp)
             start_counter.append(counter)
-            nn.pool_counter+=1
+            pool_counter += 1
 
         elif(nn.layertypes[i]=='Pad'):
-            input_shape = nn.input_shape[nn.conv_counter + nn.pool_counter + nn.pad_counter]
-            out_shape = nn.out_shapes[nn.conv_counter + nn.pool_counter + nn.pad_counter]
-            padding = nn.padding[nn.conv_counter + nn.pool_counter + nn.pad_counter]
+            input_shape = nn.input_shape[conv_counter + pool_counter + pad_counter]
+            out_shape = nn.out_shapes[conv_counter + pool_counter + pad_counter]
+            padding = nn.padding[conv_counter + pool_counter + pad_counter]
             index = nn.predecessors[i+1][0]
             counter = start_counter[index]
             counter = handle_padding(model, var_list, counter, input_shape, out_shape, padding[0], padding[1], padding[2], padding[3], nlb[i], nub[i], is_nchw=is_nchw)
             start_counter.append(counter)
-            nn.pad_counter += 1
+            pad_counter += 1
 
         elif nn.layertypes[i] in ['Resadd']:
             index1 = nn.predecessors[i+1][0]
             index2 = nn.predecessors[i+1][1]
             counter1 = start_counter[index1]
             counter2 = start_counter[index2]
-            counter = handle_residual(model,var_list,counter1,counter2,nlb[i],nub[i])
+            counter = handle_residual(model, var_list, counter1, counter2, nlb[i], nub[i])
             start_counter.append(counter)
-            nn.residual_counter +=1
+            residual_counter += 1
+
         elif nn.layertypes[i] in ['Pad']:
             raise NotImplementedError
         else:
             assert 0, 'layertype:' + nn.layertypes[i] + 'not supported for refine'
 
-    nn.ffn_counter = ffn_counter
-    nn.conv_counter = conv_counter
-    nn.residual_counter = residual_counter
-    nn.pool_counter = pool_counter
-    nn.activation_counter = activation_counter
     #model.write("model_refinepoly.lp")
     np.set_printoptions(threshold=sys.maxsize)
     #print("NLB ", nlb[-4], len(nlb[-4]))
@@ -709,6 +689,7 @@ class Cache:
 
 
 def solver_call(ind):
+    ### Call solver to compute neuronwise bounds in parallel
     model = Cache.model.copy()
     runtime = 0
 
@@ -854,10 +835,6 @@ def add_spatial_constraints(model, spatial_constraints, var_list, input_size):
 
 
 def verify_network_with_milp(nn, LB_N0, UB_N0, nlb, nub, constraints, spatial_constraints=None, is_nchw=False):
-    nn.ffn_counter = 0
-    nn.conv_counter = 0
-    nn.residual_counter = 0
-    nn.maxpool_counter = 0
     numlayer = nn.numlayer
     input_size = len(LB_N0)
     start_milp = time.time()
@@ -910,8 +887,11 @@ def verify_network_with_milp(nn, LB_N0, UB_N0, nlb, nub, constraints, spatial_co
     else:
         return True, None, None
 
+
 def evaluate_models(model_lp, var_list_lp, counter_lp, input_len, contraints, terminate_on_failure, model_p_milp=None,
                     var_list_p_milp=None, counter_p_milp=None):
+    ### Evaluate an LP and partial MILP model for one of the refine domains
+
     adex_list = []
     label_failed = []
     and_result = True
@@ -919,7 +899,7 @@ def evaluate_models(model_lp, var_list_lp, counter_lp, input_len, contraints, te
     model_bounds = {}
     for _ in range(len(contraints)):
         or_list = updated_constraint.pop(0)
-        # OR
+        # OR-Constraint
         or_result = False
         adex_list_or = []
         for is_greater_tuple in or_list:
@@ -986,6 +966,7 @@ def evaluate_models(model_lp, var_list_lp, counter_lp, input_len, contraints, te
 
 
 def obj_from_is_greater_tuple(is_greater_tuple, var_list, counter):
+    ### Define an objective for GUROBI based on an is_greater tuple
     obj = LinExpr()
     (i, j, k) = is_greater_tuple
 

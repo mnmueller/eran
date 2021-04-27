@@ -218,30 +218,12 @@ class Analyzer:
     
         dominant_class = -1
         if self.domain=='refinepoly':
-
-            #relu_needed = [1] * self.nn.numlayer
-            self.nn.ffn_counter = 0
-            self.nn.conv_counter = 0
-            self.nn.pool_counter = 0
-            self.nn.pad_counter = 0
-            self.nn.concat_counter = 0
-            self.nn.tile_counter = 0
-            self.nn.residual_counter = 0
-            self.nn.activation_counter = 0
             counter, var_list, model = create_model(self.nn, self.nn.specLB, self.nn.specUB, nlb, nub, self.relu_groups,
                                                     self.nn.numlayer, use_milp=False)
             model.setParam(GRB.Param.TimeLimit, self.timeout_final_lp)
             model.setParam(GRB.Param.Cutoff, 0.01)
 
             if self.partial_milp != 0:
-                self.nn.ffn_counter = 0
-                self.nn.conv_counter = 0
-                self.nn.pool_counter = 0
-                self.nn.pad_counter = 0
-                self.nn.concat_counter = 0
-                self.nn.tile_counter = 0
-                self.nn.residual_counter = 0
-                self.nn.activation_counter = 0
                 counter_partial_milp, var_list_partial_milp, model_partial_milp = create_model(self.nn, self.nn.specLB,
                                                                                                self.nn.specUB, nlb, nub,
                                                                                                self.relu_groups,
