@@ -51,6 +51,9 @@ from pprint import pprint
 # if config.domain=='gpupoly' or config.domain=='refinegpupoly':
 from refine_gpupoly import refine_gpupoly_results
 from utils import parse_vnn_lib_prop, translate_output_constraints, translate_input_to_box
+import onnx
+import onnx_tf
+import foolbox as fb
 
 #ZONOTOPE_EXTENSION = '.zt'
 EPS = 10**(-9)
@@ -212,7 +215,6 @@ def dave_plot(image_normalized, image_id, mean, std, is_nchw, input_shape, y, y_
         plt.show()
 
 
-
 def get_data_loader():
     # return mnist_data_loader()
     # return cifar10_data_loader()
@@ -227,6 +229,7 @@ def init_domain(d):
         return 'deeppoly'
     else:
         return d
+
 
 def get_args():
     parser = argparse.ArgumentParser(description='ERAN Example',  formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -278,6 +281,28 @@ def get_args():
                       'refinegpupoly'], "domain name can be either deepzono, refinezono, deeppoly, refinepoly, gpupoly, refinegpupoly"
 
     return config
+
+
+def onnx_2_tf(model_path, mean=None, std=None, bounds=(0,1)):
+    onnx_model = onnx.load(model_path)  # load onnx model
+    tf_rep = onnx_tf.backend.prepare(onnx_model)  # prepare tf representation
+    tf_rep.export_graph("./temp_tf_model")  # export the model
+    graph = tf.compat.v1.Graph()
+    session = tf.compat.v1.Session(graph=graph)
+    tf.compat.v1.disable_eager_execution()
+
+    if mean is not None and std is not None:
+        preprocessing = dict(mean=mean, std=mean, axis=-3)
+    else:
+        preprocessing = None
+
+    with session.as_default():
+        tf.saved_model.loader.load(session, export_dir="./temp_tf_model", tags=['serve'])
+        images = graph.get_tensor_by_name("serving_default_input:0")
+        logits = graph.get_tensor_by_name("PartitionedCall:0")
+        fb_model = fb.models.TensorFlowModel(images, logits, bounds=bounds, preprocessing=preprocessing)
+    return fb_model, session
+
 
 def evaluate_net(x, domain, network=None, eran=None):
     if "gpu" in domain:

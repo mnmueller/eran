@@ -844,9 +844,7 @@ def verify_network_with_milp(nn, LB_N0, UB_N0, nlb, nub, constraints, spatial_co
     model.setParam(GRB.Param.Cutoff, 0.01)
 
     if spatial_constraints is not None:
-        add_spatial_constraints(
-            model, spatial_constraints, var_list, input_size
-        )
+        add_spatial_constraints(model, spatial_constraints, var_list, input_size)
                 
     adv_examples = []
     non_adv_examples = []
