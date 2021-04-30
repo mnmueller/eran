@@ -19,10 +19,11 @@ from tensorflow_translator import *
 from onnx_translator import *
 from optimizer import *
 from analyzer import *
-
+import pickle as pkl
+import re
 
 class ERAN:
-    def __init__(self, model, session=None, is_onnx = False):
+    def __init__(self, model, session=None, is_onnx=False, pkl_file=None):
         """
         This constructor takes a reference to a TensorFlow Operation, TensorFlow Tensor, or Keras model. The two TensorFlow functions graph_util.convert_variables_to_constants and 
         graph_util.remove_training_nodes will be applied to the graph to cleanse it of any nodes that are linked to training.
@@ -51,6 +52,8 @@ class ERAN:
         else:
             translator = TFTranslator(model, session)
         operations, resources = translator.translate()
+        if pkl_file is not None:
+            pkl.dump((resources, operations), open(pkl_file,"wb"))
         self.input_shape = resources[0]["deeppoly"][2]
         self.optimizer = Optimizer(operations, resources)
         print('This network has ' + str(self.optimizer.get_neuron_count()) + ' neurons.')
