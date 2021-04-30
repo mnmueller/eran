@@ -87,21 +87,31 @@ dtype = torch.float32
 #     net_name = re.match(".*\/([a-z,A-z,_,0-9,\.]*)",x).group(1)
 #     os.system(f"wget -O /home/mark/data/nets/mnist/{net_name} {x}")
 
-def run(last_i=0):
-    for i in range(len(mnist_nets)):
+def run(dataset, last_i=0, convert=True):
+    if dataset == "mnist":
+        net_list = mnist_nets
+    elif dataset == "cifar10":
+        net_list = cifar_nets
+    else:
+        assert False
+
+    for i in range(len(net_list)):
         if i < last_i:
             continue
-        x = mnist_nets[i]
+
+        x = net_list[i]
         net_name = re.match(".*\/([a-z,A-z,_,0-9,\.]*)",x).group(1)
-        net_name = re.match("([a-z,A-z,_,0-9,\.]*)\.[a-z]*", net_name).group(1) + ".onnx"
+
         # os.system(f"wget -O /home/mark/data/nets/cifar10/{net_name} {x}")
         print(f"Converting network: {net_name}")
 
-        dataset = "mnist"
-
-        netname = os.path.join("/home/mark/data/nets/mnist", net_name)
-        # convert_net(netname, dataset)
-        buzz_net(netname, dataset)
+        if convert:
+            netname = os.path.join(f"/home/mark/data/nets/{dataset}", net_name)
+            convert_net(netname, dataset)
+        else:
+            net_name = re.match("([a-z,A-z,_,0-9,\.]*)\.[a-z]*", net_name).group(1) + ".onnx"
+            netname = os.path.join(f"/home/mark/data/nets/{dataset}", net_name)
+            buzz_net(netname, dataset)
 
 def get_tests(dataset, geometric):
     if geometric:
@@ -272,7 +282,7 @@ def create_torch_net(operations, resources, means, stds, input_shape, is_nchw):
     return net, layers
 
 
-def get_eran_model(netname, dataset):
+def get_eran_model(netname, dataset, write_pkl=False):
 
     filename, file_extension = os.path.splitext(netname)
 
@@ -285,6 +295,12 @@ def get_eran_model(netname, dataset):
 
     non_layer_operation_types = ['NoOp', 'Assign', 'Const', 'RestoreV2', 'SaveV2', 'PlaceholderWithDefault', 'IsVariableInitialized', 'Placeholder', 'Identity']
 
+    if write_pkl:
+        pkl_file = re.match("(.*)\..*", netname).group(1) + ".pkl"
+    else:
+        pkl_file = None
+
+    means, stds = None, None
     if is_saved_tf_model or is_pb_file:
         netfolder = os.path.dirname(netname)
 
@@ -306,7 +322,7 @@ def get_eran_model(netname, dataset):
             last_layer_index -= 1
         model = sess.graph.get_tensor_by_name(ops[last_layer_index].name + ':0')
 
-        eran = ERAN(model, sess)
+        eran = ERAN(model, sess, pkl_file=pkl_file)
     else:
         if(dataset=='mnist'):
             num_pixels = 784
@@ -319,13 +335,13 @@ def get_eran_model(netname, dataset):
             model, is_conv = read_onnx_net(netname)
         else:
             model, is_conv, means, stds = read_tensorflow_net(netname, num_pixels, is_trained_with_pytorch, False)
-        eran = ERAN(model, is_onnx=is_onnx, pkl_file=re.match("(.*)\..*",netname).group(1)+".pkl")
-    return eran, is_trained_with_pytorch, is_conv
+        eran = ERAN(model, is_onnx=is_onnx, pkl_file=pkl_file)
+    return eran, is_trained_with_pytorch, is_conv, means, stds
 
 def buzz_net(netname, dataset):
     domain = "deeppoly"
 
-    eran, in_net_normalization, is_conv = get_eran_model(netname, dataset)
+    eran, in_net_normalization, is_conv, means, stds = get_eran_model(netname, dataset, False)
 
     if not in_net_normalization:
         if dataset == 'mnist':
@@ -352,6 +368,9 @@ def buzz_net(netname, dataset):
         normalize(specUB, means, stds, dataset, domain, is_conv)
         label, nn, nlb, nub, _, _, _ = eran.analyze_box(specLB, specUB, "deeppoly", 10, 10, True)
         correct += label == y
+
+        if i>=9:
+            break
     print(f"accuracy: {correct}/{i+1}")
 
 def convert_net(netname, dataset):
@@ -361,7 +380,7 @@ def convert_net(netname, dataset):
     elif dataset == "mnist":
         input_shape = (28, 28, 1)
 
-    eran, in_net_normalization, is_conv = get_eran_model(netname, dataset)
+    eran, in_net_normalization, is_conv, means, stds = get_eran_model(netname, dataset, True)
 
     if not in_net_normalization:
         if dataset == 'mnist':
@@ -441,5 +460,6 @@ def convert_net(netname, dataset):
     torch.save(net, model_name + ".pynet")
 
 if __name__ == "__main__":
-    last_i = 0
-    run(last_i)
+    last_i = 32
+    dataset = "mnist"
+    run(dataset, last_i)

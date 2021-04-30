@@ -21,6 +21,9 @@ from optimizer import *
 from analyzer import *
 import pickle as pkl
 import re
+import google.protobuf.pyext._message
+
+
 
 class ERAN:
     def __init__(self, model, session=None, is_onnx=False, pkl_file=None):
@@ -53,6 +56,15 @@ class ERAN:
             translator = TFTranslator(model, session)
         operations, resources = translator.translate()
         if pkl_file is not None:
+            for i in range(len(resources)):
+                for j in ["deeppoly", "deepzono"]:
+                    res = ()
+                    for k in range(len(resources[i][j])):
+                        if isinstance(resources[i][j][k], google.protobuf.pyext._message.RepeatedScalarContainer):
+                            res += (list(resources[i][j][k]),)
+                        else:
+                            res += (resources[i][j][k],)
+                    resources[i][j] = res
             pkl.dump((resources, operations), open(pkl_file,"wb"))
         self.input_shape = resources[0]["deeppoly"][2]
         self.optimizer = Optimizer(operations, resources)
