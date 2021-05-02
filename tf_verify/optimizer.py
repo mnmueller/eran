@@ -258,8 +258,8 @@ class Optimizer:
                 i += 1
             elif self.operations[i] == "Concat":
                 assert domain == "deeppoly", "Only DeepPoly currently supports concatenation"
-                width, height, channels, input_names, output_name, output_shape = self.resources[i][domain]
-                execute_list.append(DeeppolyConcat(width, height, channels, input_names, output_name, output_shape))
+                channels, input_names, output_name, output_shape = self.resources[i][domain]
+                execute_list.append(DeeppolyConcat(channels, input_names, output_name, output_shape))
                 nn.layertypes.append('Concat')
                 nn.numlayer += 1
                 i += 1

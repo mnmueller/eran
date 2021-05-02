@@ -438,7 +438,7 @@ class ONNXTranslator:
 		in_out_placeholder = ([], placeholder.name, self.clean_shape(onnxshape_to_intlist(placeholder.type.tensor_type.shape)))
 		operation_resources = [{'deepzono':in_out_placeholder, 'deeppoly':in_out_placeholder}]
 		reshape_map = {}
-		operations_to_be_ignored = ["Pack", "Shape", "StridedSlice", "Prod", "Unsqueeze", "Softmax", "Flatten", "Concat", "BatchNormalization"]
+		operations_to_be_ignored = ["Pack", "Shape", "StridedSlice", "Prod", "Unsqueeze", "Softmax", "Flatten", "BatchNormalization"]
 		padding_merger_dict = {}
 		#print("nodes ", self.nodes)
 		for node in self.nodes:
@@ -592,15 +592,19 @@ class ONNXTranslator:
 						deepzono_res = deeppoly_res
 						operation_resources.append({'deepzono':deepzono_res, 'deeppoly':deeppoly_res})
 
-			#elif node.op_type == "Concat":
-			#	axis = nchw_to_nhwc_index(node.attribute[0].i)
-			#	assert axis == 3, "ELINA backend currently only supports concatenation on the channel dimension"
-			#	channels = []
-			#	for input in node.input:
-			#		channels.append(self.get_shape(input)[axis])
-			#	width = shape[1]
-			#	height = shape[2]
-			#	operation_resources.append({'deeppoly': (width, height, channels) + in_out_info})
+			elif node.op_type == "Concat":
+				n_dim = len(self.shape_map[node.input[0]])
+				if n_dim > 2:
+					axis = nchw_to_nhwc_index(node.attribute[0].i)
+				else:
+					axis = node.attribute[0].i
+				assert axis == n_dim - 1, "ELINA backend currently only supports concatenation on the channel dimension"
+				channels = []
+				for input_node in node.input:
+					channels.append(self.get_shape(input_node)[axis])
+				# width = shape[1]
+				# height = shape[2]
+				operation_resources.append({'deeppoly': (channels,) + in_out_info})
 
 			elif node.op_type == "Tile":
 				repeats = nchw_to_nhwc_shape(self.constants_map[node.input[1]])
