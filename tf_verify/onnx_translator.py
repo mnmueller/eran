@@ -299,7 +299,11 @@ def prepare_model(model):
 
 		elif node.op_type == "Concat":
 			all_constant = True
-			axis = nchw_to_nhwc_index(node.attribute[0].i)
+			n_dim = len(shape_map[node.input[0]])
+			if n_dim > 2:
+				axis = nchw_to_nhwc_index(node.attribute[0].i)
+			else:
+				axis = node.attribute[0].i
 			for node_input in node.input:
 				if not node_input in constants_map:
 					all_constant = False
@@ -317,7 +321,7 @@ def prepare_model(model):
 				new_axis_size += shape_map[node_input][axis]
 			shape_map[node.output[0]] = [shape_map[node.input[0]][i] if i != axis else new_axis_size for i in range(len(shape_map[node.input[0]]))]
 			if not all_constant:
-				assert axis == 3, "ELINA currently only supports concatenation on the channel dimension"
+				assert axis == n_dim-1, "ELINA currently only supports concatenation on the channel dimension"
 
 		elif node.op_type == "Tile":
 			repeats = nchw_to_nhwc_shape(constants_map[node.input[1]])
